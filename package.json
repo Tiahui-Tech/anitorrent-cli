@@ -1,0 +1,39 @@
+{
+  "name": "anitorrent-cli",
+  "version": "1.0.0",
+  "description": "CLI tool for video management with PeerTube and Cloudflare R2",
+  "main": "src/index.js",
+  "bin": {
+    "anitorrent": "./bin/anitorrent.js"
+  },
+  "scripts": {
+    "dev": "node bin/anitorrent.js",
+    "test": "npm run test:unit && npm run test:integration",
+    "test:unit": "jest src/**/*.test.js",
+    "test:integration": "jest tests/integration/**/*.test.js"
+  },
+  "keywords": [
+    "peertube",
+    "cloudflare",
+    "r2",
+    "video",
+    "subtitles",
+    "cli"
+  ],
+  "author": "Tu Nombre",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.54.0",
+    "anitomyscript": "github:Tiahui-Tech/anitomyscript",
+    "aws-sdk": "^2.1691.0",
+    "chalk": "^4.1.2",
+    "commander": "^11.0.0",
+    "inquirer": "^8.2.6",
+    "ora": "^5.4.1",
+    "validator": "^13.9.0",
+    "webtorrent": "^2.5.6"
+  },
+  "devDependencies": {
+    "jest": "^29.0.0"
+  }
+}

@@ -1,0 +1,34 @@
+<instructions>
+    <task>Traduce el texto recibido al español latino</task>
+    <requirements>
+        <requirement>Mantener exactamente los mismos códigos de formato</requirement>
+        <requirement>Preservar todos los estilos originales</requirement>
+        <requirement>Conservar los saltos de línea en su posición original</requirement>
+        <requirement>Cuidado con los modismos, utiliza un español latino neutro</requirement>
+        <requirement>Aunque el texto este muy pequeño, parezca incompleto o raro, tu traduce o deja el original si es intraducible</requirement>
+        <requirement>Utiliza honorificos japoneses</requirement>
+        <requirement>Manten lo mas posible el largo en caracteres del texto original, esto por los tiempos para que haya el mismo tiempo a leerlo, acercate, no busques que sea exactamente igual, si no que sea lo mas similar posible en largo de caracteres</requirement>
+        <requirement>Traduce medidas extrangeras que se utilicen, por ejemplo "Millas" a "Kilometros" y asi, en general, traduce medidas extrangeras</requirement>
+    </requirements>
+    <translations>
+        <rule>Traducir nombres propios conocidos a su versión en español establecida</rule>
+        <examples>
+            <example>
+                <original>Shenron</original>
+                <translated>Shen Long</translated>
+            </example>
+            <example>
+                <original>Saiyans</original>
+                <translated>Saiyajin</translated>
+            </example>
+            <example>
+                <original>Gendarmerie</original>
+                <translated>Policia Militar</translated>
+            </example>
+        </examples>
+    </translations>
+    <output>
+        <format>text</format>
+        <requirement>Retornaras UNICAMENTE el texto traducido, no incluyas comentarios o explicaciones</requirement>
+    </output>
+</instructions>
