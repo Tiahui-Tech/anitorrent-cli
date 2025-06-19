@@ -90,6 +90,7 @@ class SubtitleService {
             return {
                 index: stream.index,
                 trackNumber: index,
+                streamIndex: stream.index,
                 codec: stream.codec_name,
                 language: languageInfo.language,
                 languageDetail: languageInfo.detail,
@@ -302,12 +303,39 @@ class SubtitleService {
         const subtitlesDir = await this.ensureSubtitlesDirectory(directory);
         const subtitlesPath = path.join(subtitlesDir, outputFile);
         
-        // Try ffmpeg for all video files first
+        // Validate and normalize subtitleTrack parameter
+        if (subtitleTrack === null || subtitleTrack === undefined) {
+            subtitleTrack = 0;
+        }
+        
+        if (typeof subtitleTrack !== 'number' || isNaN(subtitleTrack) || subtitleTrack < 0) {
+            return { success: false, error: `Invalid subtitle track number: ${subtitleTrack}` };
+        }
+        
+        try {
+            const tracks = await this.listSubtitleTracks(videoFile);
+            if (tracks.length === 0) {
+                return { success: false, error: 'No subtitle tracks found in video file' };
+            }
+            
+            if (subtitleTrack >= tracks.length) {
+                return { success: false, error: `Subtitle track ${subtitleTrack} not found (only ${tracks.length} tracks available)` };
+            }
+        } catch (error) {
+            return { success: false, error: `Failed to analyze video file: ${error.message}` };
+        }
+        
         try {
             return await this.extractSubtitlesWithFfmpeg(videoFile, subtitlesPath, subtitleTrack);
-        } catch (mkvError) {
-            // Fallback to mkvextract
-            return await this.extractSubtitlesWithMkv(videoFile, subtitlesPath, subtitleTrack);
+        } catch (ffmpegError) {
+            try {
+                return await this.extractSubtitlesWithMkv(videoFile, subtitlesPath, subtitleTrack);
+            } catch (mkvError) {
+                return { 
+                    success: false, 
+                    error: `Both ffmpeg and mkvextract failed. FFmpeg: ${ffmpegError.message}, MKV: ${mkvError.message}` 
+                };
+            }
         }
     }
 
@@ -333,13 +361,41 @@ class SubtitleService {
     }
 
     async extractSubtitlesWithFfmpeg(videoFile, outputPath, subtitleTrack) {
-        const command = `ffmpeg -i "${videoFile}" -map 0:s:${subtitleTrack} "${outputPath}" -y`;
+        // Validate input parameters
+        if (subtitleTrack === null || subtitleTrack === undefined) {
+            return { success: false, error: 'Subtitle track cannot be null or undefined' };
+        }
+        
+        if (typeof subtitleTrack !== 'number' || isNaN(subtitleTrack) || subtitleTrack < 0) {
+            return { success: false, error: `Invalid subtitle track number: ${subtitleTrack}` };
+        }
+        
+        const tracks = await this.listSubtitleTracks(videoFile);
+        
+        if (subtitleTrack >= tracks.length) {
+            return { success: false, error: `Subtitle track ${subtitleTrack} not found (only ${tracks.length} tracks available)` };
+        }
+        
+        const track = tracks[subtitleTrack];
+        
+        if (!track) {
+            return { success: false, error: `Track data not found for track ${subtitleTrack}` };
+        }
+        
+        let streamMap;
+        if (track.source === 'ffprobe' && track.streamIndex !== undefined) {
+            streamMap = `0:${track.streamIndex}`;
+        } else {
+            streamMap = `0:s:${subtitleTrack}`;
+        }
+        
+        const command = `ffmpeg -i "${videoFile}" -map ${streamMap} "${outputPath}" -y`;
         
         try {
             const { stdout, stderr } = await execAsync(command);
             return { success: true, outputPath };
         } catch (error) {
-            return { success: false, error: error.message };
+            return { success: false, error: `FFmpeg command failed: ${error.message}. Command: ${command}` };
         }
     }
 
@@ -366,6 +422,11 @@ class SubtitleService {
                     // No Spanish track found, use first available track
                     targetTrack = 0;
                 }
+            }
+            
+            // Ensure targetTrack is always a valid number
+            if (targetTrack === null || targetTrack === undefined) {
+                targetTrack = 0;
             }
             
             if (targetTrack >= tracks.length) {
@@ -409,7 +470,8 @@ class SubtitleService {
         
         if (spanishTracks.length === 1) {
             // Only one Spanish track, it's the default (latino)
-            return spanishTracks[0].trackNumber;
+            const trackNumber = spanishTracks[0].trackNumber;
+            return (trackNumber !== null && trackNumber !== undefined) ? trackNumber : 0;
         }
         
         // Multiple Spanish tracks - find Latino
@@ -420,7 +482,8 @@ class SubtitleService {
             // Look for explicit Latino indicators
             if (detail.includes('Latino') || detail.includes('es-419') || 
                 title.toLowerCase().includes('latin') || title.toLowerCase().includes('419')) {
-                return track.trackNumber;
+                const trackNumber = track.trackNumber;
+                return (trackNumber !== null && trackNumber !== undefined) ? trackNumber : 0;
             }
         }
         
@@ -436,11 +499,13 @@ class SubtitleService {
             }
             
             // This is likely Latino (not explicitly España)
-            return track.trackNumber;
+            const trackNumber = track.trackNumber;
+            return (trackNumber !== null && trackNumber !== undefined) ? trackNumber : 0;
         }
         
         // Fallback: return first Spanish track
-        return spanishTracks[0].trackNumber;
+        const trackNumber = spanishTracks[0].trackNumber;
+        return (trackNumber !== null && trackNumber !== undefined) ? trackNumber : 0;
     }
 
     async extractAllSubtitleTracks(videoFile, directory = '.') {
@@ -527,7 +592,7 @@ class SubtitleService {
         }
     }
 
-    async extractFromPlaylist(playlistId, subtitleTrack = 0, apiUrl = 'https://peertube.anitorrent.com/api/v1', directory = '.') {
+    async extractFromPlaylist(playlistId, subtitleTrack = 0, apiUrl = 'https://peertube.anitorrent.com/api/v1', directory = '.', offsetMs = 0) {
         const peertubeVideos = await this.fetchPlaylistVideos(playlistId, apiUrl);
         const localFiles = await this.getLocalVideoFiles(directory);
         
@@ -560,6 +625,13 @@ class SubtitleService {
         for (const match of matches) {
             const outputFile = `${match.peertubeVideo.video.shortUUID}.ass`;
             const result = await this.extractSubtitles(match.localFile, outputFile, subtitleTrack, directory);
+            
+            if (result.success && offsetMs && offsetMs !== 0) {
+                const offsetResult = await this.adjustSubtitleTiming(result.outputPath, offsetMs, result.outputPath);
+                result.offsetApplied = offsetResult.success;
+                result.offsetError = offsetResult.success ? null : offsetResult.error;
+            }
+            
             results.push({
                 match,
                 outputFile,
@@ -742,6 +814,87 @@ class SubtitleService {
         }
         
         return results;
+    }
+
+    async adjustSubtitleTiming(subtitleFile, offsetMs, outputFile = null) {
+        const fs = require('fs').promises;
+        const path = require('path');
+        
+        try {
+            const content = await fs.readFile(subtitleFile, 'utf8');
+            
+            if (!outputFile) {
+                const parsed = path.parse(subtitleFile);
+                const offsetStr = offsetMs >= 0 ? `+${offsetMs}ms` : `${offsetMs}ms`;
+                outputFile = path.join(parsed.dir, `${parsed.name}_offset_${offsetStr}${parsed.ext}`);
+            }
+            
+            const adjustedContent = this.adjustAssTimings(content, offsetMs);
+            
+            await fs.writeFile(outputFile, adjustedContent, 'utf8');
+            
+            return {
+                success: true,
+                inputFile: subtitleFile,
+                outputFile,
+                offsetMs,
+                message: `Timing adjusted by ${offsetMs}ms`
+            };
+        } catch (error) {
+            return {
+                success: false,
+                inputFile: subtitleFile,
+                outputFile: outputFile || subtitleFile,
+                offsetMs,
+                error: error.message
+            };
+        }
+    }
+
+    adjustAssTimings(content, offsetMs) {
+        const lines = content.split('\n');
+        const adjustedLines = lines.map(line => {
+            if (line.startsWith('Dialogue:') || line.startsWith('Comment:')) {
+                const parts = line.split(',');
+                if (parts.length >= 10) {
+                    const startTime = parts[1];
+                    const endTime = parts[2];
+                    
+                    const adjustedStartTime = this.adjustAssTime(startTime, offsetMs);
+                    const adjustedEndTime = this.adjustAssTime(endTime, offsetMs);
+                    
+                    parts[1] = adjustedStartTime;
+                    parts[2] = adjustedEndTime;
+                    
+                    return parts.join(',');
+                }
+            }
+            return line;
+        });
+        
+        return adjustedLines.join('\n');
+    }
+
+    adjustAssTime(timeStr, offsetMs) {
+        const regex = /^(\d+):(\d{2}):(\d{2})\.(\d{2})$/;
+        const match = timeStr.match(regex);
+        
+        if (!match) return timeStr;
+        
+        const hours = parseInt(match[1]);
+        const minutes = parseInt(match[2]);
+        const seconds = parseInt(match[3]);
+        const centiseconds = parseInt(match[4]);
+        
+        const totalMs = (hours * 3600 + minutes * 60 + seconds) * 1000 + centiseconds * 10;
+        const adjustedMs = Math.max(0, totalMs + offsetMs);
+        
+        const newHours = Math.floor(adjustedMs / 3600000);
+        const newMinutes = Math.floor((adjustedMs % 3600000) / 60000);
+        const newSeconds = Math.floor((adjustedMs % 60000) / 1000);
+        const newCentiseconds = Math.floor((adjustedMs % 1000) / 10);
+        
+        return `${newHours}:${newMinutes.toString().padStart(2, '0')}:${newSeconds.toString().padStart(2, '0')}.${newCentiseconds.toString().padStart(2, '0')}`;
     }
 }
 

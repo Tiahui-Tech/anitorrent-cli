@@ -14,10 +14,13 @@ subtitlesCommand
   .command('list')
   .description('List subtitle tracks from a video file')
   .argument('<file>', 'video file path')
+  .option('--debug, -d', 'debug output')
+  .option('--quiet, -q', 'quiet mode')
   .action(async (file, options) => {
+    const isDebug = options.debug || false;
     const logger = new Logger({ 
-      verbose: subtitlesCommand.parent?.opts()?.verbose || false,
-      quiet: subtitlesCommand.parent?.opts()?.quiet || false
+      verbose: isDebug,
+      quiet: options.quiet || false
     });
 
     try {
@@ -66,29 +69,29 @@ subtitlesCommand
           logger.info(`  Default: ${track.default ? 'Yes' : 'No'}`, 1);
         }
         
-        if (logger.verbose) {
-          logger.verbose(`  Source: ${track.source}`, 1);
-          logger.verbose(`  Stream Index: ${track.index}`, 1);
+        if (isLogs) {
+          logger.info(`  Source: ${track.source}`);
+          logger.info(`  Stream Index: ${track.index}`);
           
           if (track.mkvTrackId !== undefined) {
-            logger.verbose(`  MKV Track ID: ${track.mkvTrackId}`, 1);
+            logger.info(`  MKV Track ID: ${track.mkvTrackId}`);
           }
           
           if (track.originalTrackName) {
-            logger.verbose(`  Original Track Name: ${track.originalTrackName}`, 1);
+            logger.info(`  Original Track Name: ${track.originalTrackName}`);
           }
           
           if (track.properties) {
-            logger.verbose(`  MKV Properties:`, 1);
+            logger.info(`  MKV Properties:`);
             Object.entries(track.properties).forEach(([key, value]) => {
-              logger.verbose(`    ${key}: ${value}`, 1);
+              logger.info(`    ${key}: ${value}`);
             });
           }
           
           if (track.allTags) {
-            logger.verbose(`  FFprobe Tags:`, 1);
+            logger.info(`  FFprobe Tags:`);
             Object.entries(track.allTags).forEach(([key, value]) => {
-              logger.verbose(`    ${key}: ${value}`, 1);
+              logger.info(`    ${key}: ${value}`);
             });
           }
           
@@ -97,7 +100,7 @@ subtitlesCommand
               .filter(([key, value]) => value === 1)
               .map(([key]) => key);
             if (dispositionFlags.length > 0) {
-              logger.verbose(`  Disposition: ${dispositionFlags.join(', ')}`, 1);
+              logger.info(`  Disposition: ${dispositionFlags.join(', ')}`);
             }
           }
         }
@@ -115,19 +118,80 @@ subtitlesCommand
 
 subtitlesCommand
   .command('extract')
-  .description('Extract subtitles from videos')
-  .argument('[playlist-id]', 'PeerTube playlist ID - alphanumeric string (e.g., "123" or "tgjYS5VH2vJFkp3fCVcmP5")')
+  .description('Extract subtitles from videos or playlists')
+  .argument('[input]', 'video file path or PeerTube playlist ID (auto-detected)')
   .option('--folder <path>', 'folder path to search for videos (default: current directory)')
   .option('--track <number>', 'subtitle track number (if not specified, auto-finds Spanish Latino)')
   .option('--all', 'extract all subtitle tracks')
-  .option('--file <path>', 'extract from specific file instead of folder')
   .option('--translate', 'also create AI-translated version to Spanish')
   .option('--translate-prompt <path>', 'custom system prompt file for translation')
-  .action(async (playlistId, options) => {
+  .option('--offset <ms>', 'adjust subtitle timing by specified milliseconds (e.g., 4970 for +4.970s)', parseInt)
+  .option('--logs', 'detailed output')
+  .action(async (input, options, cmd) => {
+    const isLogs = options.logs || false;
+    
     const logger = new Logger({ 
-      verbose: subtitlesCommand.parent?.opts()?.verbose || false,
-      quiet: subtitlesCommand.parent?.opts()?.quiet || false
+      verbose: false,
+      quiet: options.quiet || false
     });
+
+    const detectInputType = async (input) => {
+      if (!input) return { type: 'folder', value: null };
+      
+      const fs = require('fs').promises;
+      const path = require('path');
+      
+      try {
+        const pathValidation = await Validators.validateFilePath(input);
+        const resolvedPath = pathValidation.resolvedPath;
+        
+        const stats = await fs.stat(resolvedPath);
+        
+        if (stats.isFile()) {
+          const ext = path.extname(resolvedPath).toLowerCase();
+          const videoExtensions = ['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.ts', '.mts'];
+          
+          if (videoExtensions.includes(ext)) {
+            return { type: 'video', value: resolvedPath };
+          } else {
+            throw new Error(`File "${input}" is not a supported video format`);
+          }
+        } else if (stats.isDirectory()) {
+          return { type: 'folder', value: resolvedPath };
+        }
+      } catch (error) {
+        if (error.code === 'ENOENT') {
+          const trimmedInput = input.trim();
+          if (trimmedInput && trimmedInput.length > 0) {
+            return { type: 'playlist', value: trimmedInput };
+          }
+        }
+        throw error;
+      }
+      
+      return { type: 'unknown', value: input };
+    };
+
+    const applyOffsetToFile = async (filePath, offsetMs) => {
+      if (!offsetMs || offsetMs === 0) return { success: true, offsetApplied: false };
+
+      const subtitleService = new SubtitleService();
+      
+      try {
+        const result = await subtitleService.adjustSubtitleTiming(filePath, offsetMs, filePath);
+        return { 
+          success: result.success, 
+          offsetApplied: true, 
+          error: result.error 
+        };
+      } catch (error) {
+        return { 
+          success: false, 
+          offsetApplied: false, 
+          error: error.message 
+        };
+      }
+    };
 
     try {
       let subtitleTrack = null;
@@ -154,13 +218,11 @@ subtitlesCommand
         }
       }
 
-      // Handle folder path
       let folderPath = '.';
       if (options.folder) {
         const pathValidation = await Validators.validateFilePath(options.folder);
         folderPath = pathValidation.resolvedPath;
         
-        // Check if the path exists and is a directory
         const fs = require('fs').promises;
         try {
           const stats = await fs.stat(folderPath);
@@ -177,166 +239,407 @@ subtitlesCommand
         }
       }
 
-      // Validate playlist ID if provided
-      if (playlistId) {
-        const trimmedId = playlistId.trim();
-        if (!trimmedId || trimmedId.length === 0) {
-          logger.error('Playlist ID cannot be empty');
-          process.exit(1);
-        }
-        // Playlist IDs are alphanumeric strings, so we just check it's not empty
-        // Examples: "123", "tgjYS5VH2vJFkp3fCVcmP5"
-      }
+      const inputType = await detectInputType(input);
 
-      if (!playlistId) {
-        if (options.file) {
-          // Extract from specific file
-          const pathValidation = await Validators.validateFilePath(options.file);
-          const videoFile = pathValidation.resolvedPath;
+      if (inputType.type === 'video') {
+        const videoFile = inputType.value;
+
+        if (options.all) {
+          logger.header('Extract All Subtitle Tracks');
+          logger.info(`File: ${videoFile}`);
+          if (translationConfig) {
+            logger.info('Translation: Enabled');
+          }
+          if (options.offset) {
+            logger.info(`Timing offset: ${options.offset}ms (${options.offset >= 0 ? 'forward' : 'backward'})`);
+          }
+          logger.separator();
+
+          const spinner = ora('Extracting all subtitle tracks...').start();
           
-          const fs = require('fs').promises;
-          try {
-            const stats = await fs.stat(videoFile);
-            if (!stats.isFile()) {
-              logger.error(`Path "${options.file}" is not a file`);
-              process.exit(1);
+          let results;
+          if (translationConfig) {
+            const onProgress = (progress) => {
+              if (progress.type === 'translation_start') {
+                spinner.text = `Translating ${require('path').basename(progress.file)}...`;
+              } else if (progress.type === 'translation_complete') {
+                spinner.text = 'Extracting subtitle tracks...';
+              }
+            };
+            
+            results = await subtitleService.extractAllSubtitleTracksWithTranslation(
+              videoFile, 
+              folderPath, 
+              translationConfig,
+              onProgress
+            );
+          } else {
+            results = await subtitleService.extractAllSubtitleTracks(videoFile, folderPath);
+          }
+          
+          spinner.succeed(`Extraction completed`);
+
+          if (options.offset) {
+            const offsetSpinner = ora('Applying timing offset to extracted files...').start();
+            let offsetSuccessful = 0;
+            let offsetFailed = 0;
+
+            for (const result of results) {
+              if (result.success && result.outputFile) {
+                const offsetResult = await applyOffsetToFile(result.outputFile, options.offset);
+                if (offsetResult.success) {
+                  offsetSuccessful++;
+                  result.offsetApplied = true;
+                } else {
+                  offsetFailed++;
+                  result.offsetError = offsetResult.error;
+                }
+              }
             }
-          } catch (error) {
-            logger.error(`File not found: "${options.file}"`);
-            if (pathValidation.originalPath !== pathValidation.resolvedPath) {
-              logger.error(`Resolved path: "${pathValidation.resolvedPath}"`);
+
+            if (offsetFailed === 0) {
+              offsetSpinner.succeed(`Timing offset applied to ${offsetSuccessful} files`);
+            } else {
+              offsetSpinner.warn(`Timing offset: ${offsetSuccessful} successful, ${offsetFailed} failed`);
             }
-            process.exit(1);
           }
 
-          if (options.all) {
-            logger.header('Extract All Subtitle Tracks');
-            logger.info(`File: ${videoFile}`);
-            if (translationConfig) {
-              logger.info('Translation: Enabled');
-            }
-            logger.separator();
+          const successful = results.filter(r => r.success).length;
+          const failed = results.filter(r => !r.success).length;
 
-            const spinner = ora('Extracting all subtitle tracks...').start();
-            
-            let results;
-            if (translationConfig) {
-              const onProgress = (progress) => {
-                if (progress.type === 'translation_start') {
-                  spinner.text = `Translating ${require('path').basename(progress.file)}...`;
-                } else if (progress.type === 'translation_complete') {
-                  spinner.text = 'Extracting subtitle tracks...';
+          logger.success(`Extraction completed: ${successful} successful, ${failed} failed`);
+          if (options.offset) {
+            const offsetSuccessful = results.filter(r => r.success && r.offsetApplied).length;
+            const offsetFailed = results.filter(r => r.success && r.offsetError).length;
+            if (offsetSuccessful > 0 || offsetFailed > 0) {
+              logger.info(`Timing offset (${options.offset}ms): ${offsetSuccessful} applied, ${offsetFailed} failed`);
+            }
+          }
+
+          if (isLogs) {
+            results.forEach(result => {
+              if (result.success) {
+                logger.info(`  ✓ Track ${result.track.trackNumber} (${result.track.language}) → ${result.outputFile}`);
+                if (result.offsetApplied) {
+                  logger.info(`    ✓ Timing offset applied: ${options.offset}ms`);
+                } else if (result.offsetError) {
+                  logger.info(`    ✗ Timing offset failed: ${result.offsetError}`);
                 }
-              };
-              
-              results = await subtitleService.extractAllSubtitleTracksWithTranslation(
-                videoFile, 
-                folderPath, 
-                translationConfig,
-                onProgress
-              );
-            } else {
-              results = await subtitleService.extractAllSubtitleTracks(videoFile, folderPath);
-            }
-            
-            spinner.succeed(`Extraction completed`);
-
-            const successful = results.filter(r => r.success).length;
-            const failed = results.filter(r => !r.success).length;
-
-            logger.success(`Extraction completed: ${successful} successful, ${failed} failed`);
-
-            if (logger.verbose) {
-              results.forEach(result => {
-                if (result.success) {
-                  logger.verbose(`✓ Track ${result.track.trackNumber} (${result.track.language}) → ${result.outputFile}`, 1);
-                  if (result.translationResult) {
-                    logger.verbose(`  ✓ Translation → ${require('path').basename(result.translationResult.outputPath)}`, 2);
-                  } else if (result.translationError) {
-                    logger.verbose(`  ✗ Translation failed: ${result.translationError}`, 2);
-                  }
-                } else {
-                  logger.verbose(`✗ Track ${result.track.trackNumber}: ${result.error}`, 1);
+                if (result.translationResult) {
+                  logger.info(`    ✓ Translation → ${require('path').basename(result.translationResult.outputPath)}`);
+                } else if (result.translationError) {
+                  logger.info(`    ✗ Translation failed: ${result.translationError}`);
                 }
-              });
-            }
-          } else {
-            logger.header('Single Subtitle Track Extraction');
-            logger.info(`File: ${videoFile}`);
-            
-            if (subtitleTrack !== null) {
-              logger.info(`Track: ${subtitleTrack}`);
-            } else {
-              logger.info('Track: Auto-detect Spanish Latino');
-            }
-            if (translationConfig) {
-              logger.info('Translation: Enabled');
-            }
-            logger.separator();
-
-            // Find the actual track to use
-            let targetTrack = subtitleTrack;
-            if (targetTrack === null) {
-              const tracks = await subtitleService.listSubtitleTracks(videoFile);
-              targetTrack = subtitleService.findDefaultSpanishTrack(tracks);
-              if (targetTrack === -1) {
-                targetTrack = 0; // Fallback to first track
+              } else {
+                logger.info(`  ✗ Track ${result.track.trackNumber}: ${result.error}`);
               }
-              logger.info(`Auto-detected track: ${targetTrack}`);
-            }
-
-            const tracks = await subtitleService.listSubtitleTracks(videoFile);
-            const spanishTracks = tracks.filter(t => t.language === 'spa' || t.language === 'es');
-            const nameWithoutExt = require('path').parse(videoFile).name;
-            
-            let outputFile;
-            if (targetTrack < tracks.length) {
-              const track = tracks[targetTrack];
-              const langSuffix = subtitleService.getLanguageSuffix(track, spanishTracks.length === 1);
-              outputFile = langSuffix ? `${nameWithoutExt}_${langSuffix}.ass` : `${nameWithoutExt}.ass`;
-            } else {
-              outputFile = `${nameWithoutExt}.ass`;
-            }
-            
-            const spinner = ora('Extracting subtitle track...').start();
-            
-            let result;
-            if (translationConfig) {
-              const onProgress = (progress) => {
-                if (progress.type === 'translation_start') {
-                  spinner.text = `Translating ${require('path').basename(progress.file)}...`;
-                } else if (progress.type === 'translation_complete') {
-                  spinner.text = 'Extraction completed';
-                }
-              };
-              
-              result = await subtitleService.extractAndTranslateSubtitles(
-                videoFile, 
-                outputFile, 
-                targetTrack, 
-                folderPath, 
-                translationConfig,
-                onProgress
-              );
-            } else {
-              result = await subtitleService.extractSubtitles(videoFile, outputFile, targetTrack, folderPath);
-            }
-            
-            if (result.success) {
-              spinner.succeed(`Subtitle extracted to: ${result.outputPath}`);
-              if (result.translationResult) {
-                logger.success(`Translation created: ${result.translationResult.outputPath}`);
-              } else if (result.translationError) {
-                logger.warning(`Translation failed: ${result.translationError}`);
-              }
-            } else {
-              spinner.fail(`Extraction failed: ${result.error}`);
-              process.exit(1);
-            }
+            });
           }
         } else {
-          // Extract from folder
-          logger.header('Local Subtitle Extraction');
+          logger.header('Single Subtitle Track Extraction');
+          logger.info(`File: ${videoFile}`);
+          
+          if (subtitleTrack !== null) {
+            logger.info(`Track: ${subtitleTrack}`);
+          } else {
+            logger.info('Track: Auto-detect Spanish Latino');
+          }
+          if (translationConfig) {
+            logger.info('Translation: Enabled');
+          }
+          if (options.offset) {
+            logger.info(`Timing offset: ${options.offset}ms (${options.offset >= 0 ? 'forward' : 'backward'})`);
+          }
+          logger.separator();
+
+          let targetTrack = subtitleTrack;
+          if (targetTrack === null) {
+            const tracks = await subtitleService.listSubtitleTracks(videoFile);
+            targetTrack = subtitleService.findDefaultSpanishTrack(tracks);
+            if (targetTrack === -1) {
+              targetTrack = 0;
+            }
+            logger.info(`Auto-detected track: ${targetTrack}`);
+          }
+
+          const tracks = await subtitleService.listSubtitleTracks(videoFile);
+          const spanishTracks = tracks.filter(t => t.language === 'spa' || t.language === 'es');
+          const nameWithoutExt = require('path').parse(videoFile).name;
+          
+          let outputFile;
+          if (targetTrack < tracks.length) {
+            const track = tracks[targetTrack];
+            const langSuffix = subtitleService.getLanguageSuffix(track, spanishTracks.length === 1);
+            outputFile = langSuffix ? `${nameWithoutExt}_${langSuffix}.ass` : `${nameWithoutExt}.ass`;
+          } else {
+            outputFile = `${nameWithoutExt}.ass`;
+          }
+          
+          const spinner = ora('Extracting subtitle track...').start();
+          
+          let result;
+          if (translationConfig) {
+            const onProgress = (progress) => {
+              if (progress.type === 'translation_start') {
+                spinner.text = `Translating ${require('path').basename(progress.file)}...`;
+              } else if (progress.type === 'translation_complete') {
+                spinner.text = 'Extraction completed';
+              }
+            };
+            
+            result = await subtitleService.extractAndTranslateSubtitles(
+              videoFile, 
+              outputFile, 
+              targetTrack, 
+              folderPath, 
+              translationConfig,
+              onProgress
+            );
+          } else {
+            result = await subtitleService.extractSubtitles(videoFile, outputFile, targetTrack, folderPath);
+          }
+          
+          if (result.success) {
+            if (options.offset) {
+              spinner.text = 'Applying timing offset...';
+              const offsetResult = await applyOffsetToFile(result.outputPath, options.offset);
+              
+              if (offsetResult.success) {
+                spinner.succeed(`Subtitle extracted with timing offset applied: ${result.outputPath}`);
+                if (offsetResult.offsetApplied) {
+                  logger.info(`Timing adjusted by ${options.offset}ms`);
+                }
+              } else {
+                spinner.succeed(`Subtitle extracted to: ${result.outputPath}`);
+                logger.warning(`Failed to apply timing offset: ${offsetResult.error}`);
+              }
+            } else {
+              spinner.succeed(`Subtitle extracted to: ${result.outputPath}`);
+            }
+            
+            if (result.translationResult) {
+              logger.success(`Translation created: ${result.translationResult.outputPath}`);
+            } else if (result.translationError) {
+              logger.warning(`Translation failed: ${result.translationError}`);
+            }
+          } else {
+            spinner.fail(`Extraction failed: ${result.error}`);
+            process.exit(1);
+          }
+        }
+
+      } else if (inputType.type === 'folder') {
+        const targetDir = inputType.value || folderPath;
+        
+        logger.header('Folder-based Subtitle Extraction');
+        logger.info(`Directory: ${targetDir === '.' ? 'Current directory' : targetDir}`);
+        
+        if (options.all) {
+          logger.info('Mode: Extract all subtitle tracks');
+        } else if (subtitleTrack !== null) {
+          logger.info(`Subtitle track: ${subtitleTrack}`);
+        } else {
+          logger.info('Subtitle track: Auto-detect Spanish Latino');
+        }
+        if (translationConfig) {
+          logger.info('Translation: Enabled');
+        }
+        if (options.offset) {
+          logger.info(`Timing offset: ${options.offset}ms (${options.offset >= 0 ? 'forward' : 'backward'})`);
+        }
+        logger.separator();
+
+        const spinner = ora('Finding local video files...').start();
+        const localFiles = await subtitleService.getLocalVideoFiles(targetDir);
+        spinner.succeed(`Found ${localFiles.length} local video files`);
+
+        if (localFiles.length === 0) {
+          logger.warning(`No video files found in directory: ${targetDir}`);
+          return;
+        }
+
+        logger.info('Extracting subtitles...');
+        let results;
+        
+        if (options.all) {
+          if (translationConfig) {
+            const onProgress = (progress) => {
+              if (progress.type === 'translation_start') {
+                spinner.text = `Translating ${require('path').basename(progress.file)}...`;
+              } else if (progress.type === 'translation_complete') {
+                spinner.text = 'Extracting subtitles...';
+              }
+            };
+            results = await subtitleService.extractAllSubtitlesFromFolder(targetDir);
+          } else {
+            results = await subtitleService.extractAllSubtitlesFromFolder(targetDir);
+          }
+        } else {
+          if (translationConfig) {
+            const onProgress = (progress) => {
+              if (progress.type === 'translation_start') {
+                spinner.text = `Translating ${require('path').basename(progress.file)}...`;
+              } else if (progress.type === 'translation_complete') {
+                spinner.text = 'Extracting subtitles...';
+              }
+            };
+            results = await subtitleService.extractAllLocalSubtitlesWithTranslation(
+              subtitleTrack, 
+              targetDir, 
+              translationConfig,
+              onProgress
+            );
+          } else {
+            results = await subtitleService.extractAllLocalSubtitles(subtitleTrack, targetDir);
+          }
+        }
+        
+        if (options.offset) {
+          const offsetSpinner = ora('Applying timing offset to extracted files...').start();
+          let offsetSuccessful = 0;
+          let offsetFailed = 0;
+
+          for (const result of results) {
+            if (result.success && result.outputFile) {
+              const outputPath = require('path').join(targetDir, result.outputFile);
+              const offsetResult = await applyOffsetToFile(outputPath, options.offset);
+              if (offsetResult.success) {
+                offsetSuccessful++;
+                result.offsetApplied = true;
+              } else {
+                offsetFailed++;
+                result.offsetError = offsetResult.error;
+              }
+            }
+          }
+
+          if (offsetFailed === 0) {
+            offsetSpinner.succeed(`Timing offset applied to ${offsetSuccessful} files`);
+          } else {
+            offsetSpinner.warn(`Timing offset: ${offsetSuccessful} successful, ${offsetFailed} failed`);
+          }
+        }
+        
+        const successful = results.filter(r => r.success).length;
+        const failed = results.filter(r => !r.success).length;
+
+        logger.separator();
+        logger.success(`Extraction completed: ${successful} successful, ${failed} failed`);
+        
+        if (options.offset) {
+          const offsetSuccessful = results.filter(r => r.success && r.offsetApplied).length;
+          const offsetFailed = results.filter(r => r.success && r.offsetError).length;
+          if (offsetSuccessful > 0 || offsetFailed > 0) {
+            logger.info(`Timing offset (${options.offset}ms): ${offsetSuccessful} applied, ${offsetFailed} failed`);
+          }
+        }
+
+        if (isLogs) {
+          results.forEach(result => {
+            if (result.success) {
+              if (result.track) {
+                logger.info(`  ✓ ${result.filename} Track ${result.track.trackNumber} → ${result.outputFile}`);
+                if (result.translationResult) {
+                  logger.info(`    ✓ Translation → ${require('path').basename(result.translationResult.outputPath)}`);
+                } else if (result.translationError) {
+                  logger.info(`    ✗ Translation failed: ${result.translationError}`);
+                }
+              } else if (result.trackUsed !== undefined) {
+                const trackInfo = result.trackInfo ? ` (${result.trackInfo.language}${result.trackInfo.languageDetail ? ' ' + result.trackInfo.languageDetail : ''})` : '';
+                logger.info(`  ✓ ${result.filename} Track ${result.trackUsed}${trackInfo} → ${result.outputFile}`);
+                if (result.translationResult) {
+                  logger.info(`    ✓ Translation → ${require('path').basename(result.translationResult.outputPath)}`);
+                } else if (result.translationError) {
+                  logger.info(`    ✗ Translation failed: ${result.translationError}`);
+                }
+              } else {
+                logger.info(`  ✓ ${result.filename} → ${result.outputFile}`);
+                if (result.translationResult) {
+                  logger.info(`    ✓ Translation → ${require('path').basename(result.translationResult.outputPath)}`);
+                } else if (result.translationError) {
+                  logger.info(`    ✗ Translation failed: ${result.translationError}`);
+                }
+              }
+            } else {
+              logger.info(`  ✗ ${result.filename}: ${result.error}`);
+            }
+          });
+        }
+
+      } else if (inputType.type === 'playlist') {
+        const playlistId = inputType.value;
+        
+        logger.header('Playlist-based Subtitle Extraction');
+        logger.info(`Playlist ID: ${playlistId}`);
+        logger.info(`Directory: ${folderPath === '.' ? 'Current directory' : folderPath}`);
+        logger.info(`Subtitle track: ${subtitleTrack}`);
+        if (options.offset) {
+          logger.info(`Timing offset: ${options.offset}ms (${options.offset >= 0 ? 'forward' : 'backward'})`);
+        }
+        
+        if (isLogs) {
+          logger.info(`Logs: Detailed logging is active`);
+        }
+        
+        logger.separator();
+
+        const config = new ConfigManager();
+        const peertubeConfig = config.getPeerTubeConfig();
+
+        const spinner = ora('Fetching playlist videos...').start();
+        try {
+          const { matches, results } = await subtitleService.extractFromPlaylist(
+            playlistId, 
+            subtitleTrack, 
+            peertubeConfig.apiUrl,
+            folderPath,
+            options.offset || 0
+          );
+          spinner.succeed(`Found ${matches.length} matches`);
+
+          logger.info('Matches found:');
+          matches.forEach((match, index) => {
+            logger.info(`${index + 1}. ${match.localFile} ↔ ${match.peertubeVideo.video.name}`, 1);
+          });
+
+          logger.separator();
+          const successful = results.filter(r => r.success).length;
+          const failed = results.filter(r => !r.success).length;
+
+          logger.success(`Extraction completed: ${successful} successful, ${failed} failed`);
+          
+          if (options.offset) {
+            const offsetSuccessful = results.filter(r => r.success && r.offsetApplied).length;
+            const offsetFailed = results.filter(r => r.success && r.offsetError).length;
+            if (offsetSuccessful > 0 || offsetFailed > 0) {
+              logger.info(`Timing offset (${options.offset}ms): ${offsetSuccessful} applied, ${offsetFailed} failed`);
+            }
+          }
+
+          if (isLogs) {
+            logger.info('Detailed extraction results:');
+            results.forEach(result => {
+              if (result.success) {
+                logger.info(`  ✓ ${result.match.localFile} → ${result.outputFile}`);
+                if (result.offsetApplied) {
+                  logger.info(`    ✓ Timing offset applied: ${options.offset}ms`);
+                } else if (result.offsetError) {
+                  logger.info(`    ✗ Timing offset failed: ${result.offsetError}`);
+                }
+              } else {
+                logger.info(`  ✗ ${result.match.localFile}: ${result.error}`);
+              }
+            });
+          }
+
+        } catch (error) {
+          spinner.fail(`Failed to process playlist: ${error.message}`);
+          process.exit(1);
+        }
+
+      } else {
+        if (!input) {
+          logger.header('Current Directory Subtitle Extraction');
           logger.info(`Directory: ${folderPath === '.' ? 'Current directory' : folderPath}`);
           
           if (options.all) {
@@ -348,6 +651,9 @@ subtitlesCommand
           }
           if (translationConfig) {
             logger.info('Translation: Enabled');
+          }
+          if (options.offset) {
+            logger.info(`Timing offset: ${options.offset}ms (${options.offset >= 0 ? 'forward' : 'backward'})`);
           }
           logger.separator();
 
@@ -396,88 +702,98 @@ subtitlesCommand
             }
           }
           
+          if (options.offset) {
+            const offsetSpinner = ora('Applying timing offset to extracted files...').start();
+            let offsetSuccessful = 0;
+            let offsetFailed = 0;
+
+            for (const result of results) {
+              if (result.success && result.outputFile) {
+                const outputPath = require('path').join(folderPath, result.outputFile);
+                const offsetResult = await applyOffsetToFile(outputPath, options.offset);
+                if (offsetResult.success) {
+                  offsetSuccessful++;
+                  result.offsetApplied = true;
+                } else {
+                  offsetFailed++;
+                  result.offsetError = offsetResult.error;
+                }
+              }
+            }
+
+            if (offsetFailed === 0) {
+              offsetSpinner.succeed(`Timing offset applied to ${offsetSuccessful} files`);
+            } else {
+              offsetSpinner.warn(`Timing offset: ${offsetSuccessful} successful, ${offsetFailed} failed`);
+            }
+          }
+          
           const successful = results.filter(r => r.success).length;
           const failed = results.filter(r => !r.success).length;
 
           logger.separator();
           logger.success(`Extraction completed: ${successful} successful, ${failed} failed`);
+          
+          if (options.offset) {
+            const offsetSuccessful = results.filter(r => r.success && r.offsetApplied).length;
+            const offsetFailed = results.filter(r => r.success && r.offsetError).length;
+            if (offsetSuccessful > 0 || offsetFailed > 0) {
+              logger.info(`Timing offset (${options.offset}ms): ${offsetSuccessful} applied, ${offsetFailed} failed`);
+            }
+          }
 
-          if (logger.verbose) {
+          if (isLogs) {
             results.forEach(result => {
               if (result.success) {
                 if (result.track) {
-                  logger.verbose(`✓ ${result.filename} Track ${result.track.trackNumber} → ${result.outputFile}`, 1);
+                  logger.info(`  ✓ ${result.filename} Track ${result.track.trackNumber} → ${result.outputFile}`);
+                  if (result.offsetApplied) {
+                    logger.info(`    ✓ Timing offset applied: ${options.offset}ms`);
+                  } else if (result.offsetError) {
+                    logger.info(`    ✗ Timing offset failed: ${result.offsetError}`);
+                  }
                   if (result.translationResult) {
-                    logger.verbose(`  ✓ Translation → ${require('path').basename(result.translationResult.outputPath)}`, 2);
+                    logger.info(`    ✓ Translation → ${require('path').basename(result.translationResult.outputPath)}`);
                   } else if (result.translationError) {
-                    logger.verbose(`  ✗ Translation failed: ${result.translationError}`, 2);
+                    logger.info(`    ✗ Translation failed: ${result.translationError}`);
                   }
                 } else if (result.trackUsed !== undefined) {
                   const trackInfo = result.trackInfo ? ` (${result.trackInfo.language}${result.trackInfo.languageDetail ? ' ' + result.trackInfo.languageDetail : ''})` : '';
-                  logger.verbose(`✓ ${result.filename} Track ${result.trackUsed}${trackInfo} → ${result.outputFile}`, 1);
+                  logger.info(`  ✓ ${result.filename} Track ${result.trackUsed}${trackInfo} → ${result.outputFile}`);
+                  if (result.offsetApplied) {
+                    logger.info(`    ✓ Timing offset applied: ${options.offset}ms`);
+                  } else if (result.offsetError) {
+                    logger.info(`    ✗ Timing offset failed: ${result.offsetError}`);
+                  }
                   if (result.translationResult) {
-                    logger.verbose(`  ✓ Translation → ${require('path').basename(result.translationResult.outputPath)}`, 2);
+                    logger.info(`    ✓ Translation → ${require('path').basename(result.translationResult.outputPath)}`);
                   } else if (result.translationError) {
-                    logger.verbose(`  ✗ Translation failed: ${result.translationError}`, 2);
+                    logger.info(`    ✗ Translation failed: ${result.translationError}`);
                   }
                 } else {
-                  logger.verbose(`✓ ${result.filename} → ${result.outputFile}`, 1);
+                  logger.info(`  ✓ ${result.filename} → ${result.outputFile}`);
+                  if (result.offsetApplied) {
+                    logger.info(`    ✓ Timing offset applied: ${options.offset}ms`);
+                  } else if (result.offsetError) {
+                    logger.info(`    ✗ Timing offset failed: ${result.offsetError}`);
+                  }
                   if (result.translationResult) {
-                    logger.verbose(`  ✓ Translation → ${require('path').basename(result.translationResult.outputPath)}`, 2);
+                    logger.info(`    ✓ Translation → ${require('path').basename(result.translationResult.outputPath)}`);
                   } else if (result.translationError) {
-                    logger.verbose(`  ✗ Translation failed: ${result.translationError}`, 2);
+                    logger.info(`    ✗ Translation failed: ${result.translationError}`);
                   }
                 }
               } else {
-                logger.verbose(`✗ ${result.filename}: ${result.error}`, 1);
+                logger.info(`  ✗ ${result.filename}: ${result.error}`);
               }
             });
           }
-        }
-
-      } else {
-        logger.header('Playlist-based Subtitle Extraction');
-        logger.info(`Playlist ID: ${playlistId}`);
-        logger.info(`Directory: ${folderPath === '.' ? 'Current directory' : folderPath}`);
-        logger.info(`Subtitle track: ${subtitleTrack}`);
-        logger.separator();
-
-        const config = new ConfigManager();
-        const peertubeConfig = config.getPeerTubeConfig();
-
-        const spinner = ora('Fetching playlist videos...').start();
-        try {
-          const { matches, results } = await subtitleService.extractFromPlaylist(
-            playlistId, 
-            subtitleTrack, 
-            peertubeConfig.apiUrl,
-            folderPath
-          );
-          spinner.succeed(`Found ${matches.length} matches`);
-
-          logger.info('Matches found:');
-          matches.forEach((match, index) => {
-            logger.info(`${index + 1}. ${match.localFile} ↔ ${match.peertubeVideo.video.name}`, 1);
-          });
-
-          logger.separator();
-          const successful = results.filter(r => r.success).length;
-          const failed = results.filter(r => !r.success).length;
-
-          logger.success(`Extraction completed: ${successful} successful, ${failed} failed`);
-
-          if (logger.verbose) {
-            results.forEach(result => {
-              if (result.success) {
-                logger.verbose(`✓ ${result.match.localFile} → ${result.outputFile}`, 1);
-              } else {
-                logger.verbose(`✗ ${result.match.localFile}: ${result.error}`, 1);
-              }
-            });
-          }
-
-        } catch (error) {
-          spinner.fail(`Failed to process playlist: ${error.message}`);
+        } else {
+          logger.error(`Unable to determine input type: "${input}"`);
+          logger.info('Input can be:');
+          logger.info('  - A video file path (e.g., "./video.mkv")');
+          logger.info('  - A directory path (e.g., "./videos/")');
+          logger.info('  - A PeerTube playlist ID (e.g., "123" or "tgjYS5VH2vJFkp3fCVcmP5")');
           process.exit(1);
         }
       }
@@ -495,10 +811,13 @@ subtitlesCommand
   .option('--output <path>', 'output file path (default: adds _translated suffix)')
   .option('--prompt <path>', 'custom system prompt file path')
   .option('--max-dialogs <number>', 'maximum number of dialogs to translate', parseInt)
+  .option('--logs', 'detailed output')
+  .option('--quiet, -q', 'quiet mode')
   .action(async (file, options) => {
+    const isLogs = options.logs || false;
     const logger = new Logger({ 
-      verbose: subtitlesCommand.parent?.opts()?.verbose || false,
-      quiet: subtitlesCommand.parent?.opts()?.quiet || false
+      verbose: false,
+      quiet: options.quiet || false
     });
 
     try {
@@ -714,10 +1033,10 @@ subtitlesCommand
           
           logger.success(`Batch translation completed: ${successful} successful, ${failed} failed`);
 
-          if (logger.verbose && failed > 0) {
+          if (isLogs && failed > 0) {
             logger.info('Failed translations:');
             results.filter(r => !r.success).forEach(result => {
-              logger.verbose(`✗ ${result.file}: ${result.error}`, 1);
+              logger.info(`  ✗ ${result.file}: ${result.error}`);
             });
           }
 
@@ -745,10 +1064,13 @@ subtitlesCommand
   .option('--playlist', 'treat pattern as PeerTube playlist ID and rename using shortUUID')
   .option('--folder <path>', 'folder path to search for videos when using playlist mode (default: current directory)')
   .option('--dry-run', 'show what would be renamed without actually renaming')
+  .option('--logs', 'detailed output')
+  .option('--quiet, -q', 'quiet mode')
   .action(async (pattern, options) => {
+    const isLogs = options.logs || false;
     const logger = new Logger({ 
-      verbose: subtitlesCommand.parent?.opts()?.verbose || false,
-      quiet: subtitlesCommand.parent?.opts()?.quiet || false
+      verbose: false,
+      quiet: options.quiet || false
     });
 
     try {
@@ -1003,9 +1325,9 @@ subtitlesCommand
           logger.info(`Subtitle files to rename (${renameOperations.length}):`);
           renameOperations.forEach((op, index) => {
             logger.info(`${index + 1}. ${op.oldName} → ${op.newName}`, 1);
-            if (logger.verbose) {
+            if (isLogs) {
               const videoName = op.match.localFile ? path.basename(op.match.localFile) : op.match.peertubeVideo.video.name;
-              logger.verbose(`   Video: ${videoName} ↔ ${op.match.peertubeVideo.video.name}`, 1);
+              logger.info(`     Video: ${videoName} ↔ ${op.match.peertubeVideo.video.name}`);
             }
           });
 
@@ -1033,11 +1355,11 @@ subtitlesCommand
               }
 
               await fs.rename(operation.oldPath, operation.newPath);
-              successful++;
-              
-              if (logger.verbose) {
-                logger.verbose(`✓ ${operation.oldName} → ${operation.newName}`, 1);
-              }
+                          successful++;
+            
+            if (isLogs) {
+              logger.info(`    ✓ ${operation.oldName} → ${operation.newName}`);
+            }
             } catch (error) {
               errors.push(`${operation.oldName}: ${error.message}`);
               failed++;
@@ -1050,7 +1372,7 @@ subtitlesCommand
             renameSpinner.fail(`Renaming failed: ${failed} errors`);
           }
 
-          if (errors.length > 0 && (logger.verbose || failed === renameOperations.length)) {
+          if (errors.length > 0 && (isLogs || failed === renameOperations.length)) {
             logger.separator();
             logger.info('Errors:');
             errors.forEach(error => {
@@ -1163,7 +1485,9 @@ subtitlesCommand
                 }
               }
             } catch (error) {
-              logger.verbose(`Failed to parse ${file} with anitomy: ${error.message}`);
+              if (isLogs) {
+                logger.info(`  Failed to parse ${file} with anitomy: ${error.message}`);
+              }
             }
           } else if (customPattern) {
             newBaseName = customPattern;
@@ -1235,8 +1559,8 @@ subtitlesCommand
             await fs.rename(operation.oldPath, operation.newPath);
             successful++;
             
-            if (logger.verbose) {
-              logger.verbose(`✓ ${operation.oldName} → ${operation.newName}`, 1);
+            if (isLogs) {
+              logger.info(`    ✓ ${operation.oldName} → ${operation.newName}`);
             }
           } catch (error) {
             errors.push(`${operation.oldName}: ${error.message}`);
@@ -1250,7 +1574,7 @@ subtitlesCommand
           renameSpinner.fail(`Renaming failed: ${failed} errors`);
         }
 
-        if (errors.length > 0 && (logger.verbose || failed === renameOperations.length)) {
+        if (errors.length > 0 && (isLogs || failed === renameOperations.length)) {
           logger.separator();
           logger.info('Errors:');
           errors.forEach(error => {
@@ -1266,6 +1590,113 @@ subtitlesCommand
 
     } catch (error) {
       logger.error(`Rename operation failed: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+subtitlesCommand
+  .command('offset')
+  .description('Adjust subtitle timing by adding or subtracting time offset')
+  .argument('<file>', 'subtitle file path (.ass format)')
+  .argument('<offset>', 'time offset in milliseconds (positive for forward, negative for backward)')
+  .option('--output <path>', 'output file path (default: adds _offset_XXXms suffix)')
+  .option('--overwrite', 'overwrite the original file instead of creating a new one')
+  .option('--logs', 'detailed output')
+  .option('--quiet, -q', 'quiet mode')
+  .action(async (file, offset, options) => {
+    const isLogs = options.logs || false;
+    const logger = new Logger({ 
+      verbose: false,
+      quiet: options.quiet || false
+    });
+
+    try {
+      const offsetMs = parseInt(offset);
+      if (isNaN(offsetMs)) {
+        logger.error('Invalid offset value. Please provide a valid number in milliseconds.');
+        logger.info('Examples:');
+        logger.info('  4970 (move forward 4.970 seconds)');
+        logger.info('  -2500 (move backward 2.5 seconds)');
+        process.exit(1);
+      }
+
+      const pathValidation = await Validators.validateFilePath(file);
+      const subtitleFile = pathValidation.resolvedPath;
+      
+      const fs = require('fs').promises;
+      try {
+        const stats = await fs.stat(subtitleFile);
+        if (!stats.isFile()) {
+          logger.error(`Path "${file}" is not a file`);
+          process.exit(1);
+        }
+      } catch (error) {
+        logger.error(`File not found: "${file}"`);
+        if (pathValidation.originalPath !== pathValidation.resolvedPath) {
+          logger.error(`Resolved path: "${pathValidation.resolvedPath}"`);
+        }
+        process.exit(1);
+      }
+
+      if (!subtitleFile.toLowerCase().endsWith('.ass')) {
+        logger.error('Only .ass subtitle files are supported for timing adjustment');
+        process.exit(1);
+      }
+
+      const subtitleService = new SubtitleService();
+      
+      let outputFile = options.output;
+      
+      if (options.overwrite) {
+        outputFile = subtitleFile;
+      }
+
+      logger.header('Subtitle Timing Adjustment');
+      logger.info(`File: ${subtitleFile}`);
+      logger.info(`Offset: ${offsetMs}ms (${offsetMs >= 0 ? 'forward' : 'backward'})`);
+      if (offsetMs >= 0) {
+        logger.info(`  Equivalent: +${(offsetMs / 1000).toFixed(3)} seconds`);
+      } else {
+        logger.info(`  Equivalent: ${(offsetMs / 1000).toFixed(3)} seconds`);
+      }
+      
+      if (options.overwrite) {
+        logger.info('Mode: Overwrite original file');
+      } else if (outputFile) {
+        logger.info(`Output: ${outputFile}`);
+      } else {
+        logger.info('Output: Auto-generated filename with offset suffix');
+      }
+      logger.separator();
+
+      const spinner = ora('Adjusting subtitle timing...').start();
+      
+      const result = await subtitleService.adjustSubtitleTiming(subtitleFile, offsetMs, outputFile);
+      
+      if (result.success) {
+        if (options.overwrite) {
+          spinner.succeed('Subtitle timing adjusted successfully');
+          logger.success(`Original file updated: ${result.outputFile}`);
+        } else {
+          spinner.succeed('Subtitle timing adjusted successfully');
+          logger.success(`Adjusted file created: ${result.outputFile}`);
+        }
+        
+        logger.separator();
+        logger.info('Timing adjustment completed');
+        logger.info(`Original: ${result.inputFile}`);
+        if (!options.overwrite) {
+          logger.info(`Adjusted: ${result.outputFile}`);
+        }
+        logger.info(`Offset applied: ${result.offsetMs}ms`);
+      } else {
+        spinner.fail('Timing adjustment failed');
+        logger.error(`Error: ${result.error}`);
+        process.exit(1);
+      }
+
+    } catch (error) {
+      logger.error(`Timing adjustment failed: ${error.message}`);
       process.exit(1);
     }
   });

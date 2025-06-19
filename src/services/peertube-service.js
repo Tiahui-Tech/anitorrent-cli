@@ -213,11 +213,11 @@ class PeerTubeService {
         }
     }
 
-    async listVideos(limit = 10) {
+    async listVideos(limit = 10, start = 0) {
         const accessToken = await this.getValidAccessToken();
         
         try {
-            const response = await fetch(`${this.apiUrl}/videos?count=${limit}`, {
+            const response = await fetch(`${this.apiUrl}/videos?count=${limit}&start=${start}`, {
                 headers: {
                     'Authorization': `Bearer ${accessToken}`
                 }
@@ -319,6 +319,82 @@ class PeerTubeService {
             return true;
         } catch (error) {
             return false;
+        }
+    }
+
+    async createPlaylist(options = {}) {
+        const {
+            displayName,
+            privacy = 1,
+            videoChannelId
+        } = options;
+
+        if (!displayName) {
+            throw new Error('displayName is required');
+        }
+
+        if (!videoChannelId) {
+            throw new Error('videoChannelId is required');
+        }
+
+        const accessToken = await this.getValidAccessToken();
+        
+        const body = {
+            displayName,
+            privacy,
+            videoChannelId
+        };
+
+        try {
+            const response = await fetch(`${this.apiUrl}/video-playlists`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${accessToken}`
+                },
+                body: JSON.stringify(body)
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
+            }
+
+            const result = await response.json();
+            return result;
+
+        } catch (error) {
+            throw new Error(`Error creating playlist: ${error.message}`);
+        }
+    }
+
+    async addVideoToPlaylist(playlistId, videoId) {
+        const accessToken = await this.getValidAccessToken();
+        
+        const body = {
+            videoId
+        };
+
+        try {
+            const response = await fetch(`${this.apiUrl}/video-playlists/${playlistId}/videos`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${accessToken}`
+                },
+                body: JSON.stringify(body)
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
+            }
+
+            const result = await response.json();
+            return result;
+
+        } catch (error) {
+            throw new Error(`Error adding video to playlist: ${error.message}`);
         }
     }
 }

@@ -15,8 +15,9 @@ videoCommand
   .option('--output <path>', 'output file path (default: input_with_intro.ext)')
   .option('--intro <path>', 'custom intro file path (default: data/intro.mp4)')
   .action(async (input, options) => {
+    const isLogs = videoCommand.parent?.opts()?.logs || false;
     const logger = new Logger({ 
-      verbose: videoCommand.parent?.opts()?.verbose || false,
+      verbose: false,
       quiet: videoCommand.parent?.opts()?.quiet || false
     });
 
@@ -32,17 +33,21 @@ videoCommand
       }
 
       const inputVideoPath = inputValidation.resolvedPath;
-      logger.verbose(`Using input video: ${inputVideoPath}`);
+      if (isLogs) {
+        logger.info(`Using input video: ${inputVideoPath}`);
+      }
 
       if (!Validators.isValidVideoFile(inputVideoPath)) {
         logger.warning('Input file does not appear to be a video file');
       }
 
       const introPath = options.intro || path.resolve(__dirname, '..', '..', 'data', 'intro.mp4');
-      logger.verbose(`Using intro file: ${introPath}`);
+      if (isLogs) {
+        logger.info(`Using intro file: ${introPath}`);
+      }
 
       const videoService = new VideoService({
-        verbose: videoCommand.parent?.opts()?.verbose || false,
+        verbose: false,
         quiet: videoCommand.parent?.opts()?.quiet || false
       });
 
@@ -54,7 +59,9 @@ videoCommand
       }
 
       const outputPath = options.output || videoService.generateOutputFileName(inputVideoPath);
-      logger.verbose(`Output will be saved to: ${outputPath}`);
+      if (isLogs) {
+        logger.info(`Output will be saved to: ${outputPath}`);
+      }
 
       const outputExists = await videoService.fileExists(outputPath);
       if (outputExists) {
@@ -120,13 +127,17 @@ videoCommand
 
       } catch (error) {
         spinner.fail(`Merge failed: ${error.message}`);
-        logger.verbose(`Full error: ${error.stack}`);
+        if (isLogs) {
+          logger.info(`Full error: ${error.stack}`);
+        }
         process.exit(1);
       }
 
     } catch (error) {
       logger.error(`Video merge failed: ${error.message}`);
-      logger.verbose(`Full error: ${error.stack}`);
+      if (isLogs) {
+        logger.info(`Full error: ${error.stack}`);
+      }
       process.exit(1);
     }
   });

@@ -1,33 +1,36 @@
 # 🚀 AniTorrent CLI
 
-A powerful command-line tool for video management with PeerTube and Cloudflare R2 integration. Streamline your video workflow with subtitle extraction, audio processing, video merging, cloud uploads, and automated PeerTube imports.
+A powerful command-line tool for video management with PeerTube and Cloudflare R2 integration. Streamline your video workflow with subtitle extraction, audio processing, video merging, cloud uploads, automated PeerTube imports, AI translation, and intelligent playlist creation.
 
 ## ✨ Features
 
 - 🎬 **Video Processing**: Merge intro videos with main content while preserving all audio tracks and metadata
 - 🎵 **Audio Management**: Extract and list audio tracks from videos with advanced format options
 - 📝 **Subtitle Extraction**: Extract subtitles from local videos or compare with PeerTube playlists
+- 🤖 **AI Translation**: Translate subtitle files using Claude AI with context-aware processing
 - ☁️ **Cloudflare R2 Upload**: Direct file uploads to Cloudflare R2 storage
-- 🎭 **PeerTube Integration**: Complete PeerTube video management (import, status, info)
+- 🎭 **PeerTube Integration**: Complete PeerTube video management (import, status, info, playlists)
+- 📺 **Smart Playlists**: Auto-create playlists from videos grouped by anime/season using anitomy
 - 🔄 **Auto Upload**: One-command upload to R2 + PeerTube import with processing monitoring
 - 📺 **AniList Integration**: Update episode progress with anime ID tracking
+- 📁 **Batch File Management**: Smart episode number adjustment and file parsing with anitomy
 - ⚙️ **Interactive Setup**: Step-by-step configuration with credential validation
 - 🌍 **Global Configuration**: Configuration persists across all directories and terminal sessions
 - 📊 **Rich CLI Experience**: Beautiful output with spinners, progress indicators, and colored text
 
 ## 📦 Installation
 
+### From NPM (Recommended)
+```bash
+npm install -g @tiahui/anitorrent-cli@latest
+```
+
 ### From Source
 ```bash
-git clone <repository-url>
+git clone https://github.com/Tiahui-Tech/anitorrent-cli.git
 cd anitorrent-cli
 npm install
 npm link
-```
-
-### From NPM (when published)
-```bash
-npm install -g anitorrent-cli
 ```
 
 ### Verify Installation
@@ -46,6 +49,7 @@ anitorrent config setup
 This will guide you through:
 - Cloudflare R2 credentials and settings
 - PeerTube API configuration and authentication
+- Claude AI API key for subtitle translation
 - Default channel and privacy settings
 - Credential validation
 
@@ -91,11 +95,24 @@ Commands:
 │
 ├── subtitle                   # 📝 Subtitle management
 │   ├── list <file>           # List subtitle tracks from video
-│   └── extract [playlist-id] # Extract subtitles
-│       ├── --folder <path>    # Folder to search for videos
-│       ├── --track <number>   # Subtitle track number
-│       ├── --all              # Extract all subtitle tracks
-│       └── --file <path>      # Extract from specific file
+│   ├── extract [playlist-id] # Extract subtitles
+│   │   ├── --folder <path>    # Folder to search for videos
+│   │   ├── --track <number>   # Subtitle track number
+│   │   ├── --all              # Extract all subtitle tracks
+│   │   └── --file <path>      # Extract from specific file
+│   ├── translate [file]      # 🤖 AI translate subtitle files
+│   │   ├── --output <path>    # Output file path
+│   │   ├── --prompt <path>    # Custom system prompt file
+│   │   └── --max-dialogs <n>  # Maximum dialogs to translate
+│   └── rename [pattern]      # 📝 Rename subtitle files
+│       ├── --include-translated # Include _translated files
+│       ├── --anitomy          # Use anitomy parsing for names
+│       ├── --prefix <text>    # Add prefix to filenames
+│       ├── --suffix <text>    # Add suffix to filenames
+│       ├── --replace <from,to> # Replace text in filenames
+│       ├── --playlist         # Use PeerTube playlist for renaming
+│       ├── --folder <path>    # Folder path for playlist mode
+│       └── --dry-run          # Preview changes only
 │
 ├── upload                     # 📤 File uploads
 │   ├── r2 <file>             # Upload to Cloudflare R2
@@ -103,24 +120,36 @@ Commands:
 │   │   └── --timestamp       # Add timestamp to name
 │   └── auto <file>           # Upload + PeerTube import
 │       ├── --name <name>     # Video name
-│       ├── --channel <id>    # Channel ID
-│       ├── --privacy <1-5>   # Privacy level
-│       ├── --password <pwd>  # Video password
+│   │   ├── --channel <id>    # Channel ID
+│   │   ├── --privacy <1-5>   # Privacy level
+│   │   ├── --password <pwd>  # Video password
 │       ├── --wait <minutes>  # Processing timeout
 │       ├── --keep-r2         # Keep R2 file after import
 │       └── --anime-id <id>   # AniList anime ID for episode update
 │
-└── peertube                   # 🎭 PeerTube management
-    ├── import <url>          # Import video from URL
-    │   ├── --name <name>     # Video name
-    │   ├── --channel <id>    # Channel ID
-    │   ├── --privacy <1-5>   # Privacy level
-    │   ├── --password <pwd>  # Video password
-    │   └── --wait <minutes>  # Wait for processing
-    ├── status <import-id>    # Check import status
-    ├── get <video-id>        # Get video information
-    └── list                  # List recent videos
-        └── --limit <number>  # Number of videos to show
+├── peertube                   # 🎭 PeerTube management
+│   ├── import <url>          # Import video from URL
+│   │   ├── --name <name>     # Video name
+│   │   ├── --channel <id>    # Channel ID
+│   │   ├── --privacy <1-5>   # Privacy level
+│   │   ├── --password <pwd>  # Video password
+│   │   └── --wait <minutes>  # Wait for processing
+│   ├── status <import-id>    # Check import status
+│   ├── get <video-id>        # Get video information
+│   ├── list                  # List recent videos
+│   │   └── --limit <number>  # Number of videos to show
+│   └── playlist              # 🎯 Create smart playlists
+│       └── --count <number>  # Number of videos to fetch (default: 200)
+│
+└── files                     # 📁 File and folder management
+│       ├── rename             # Batch rename files and folders
+│       │   ├── --path <directory> # Target directory path
+│       │   ├── --start <number>   # Starting episode number
+│       │   └── --dry-run          # Preview changes without executing
+│       └── parse [file]         # 🔍 Parse anime file names with anitomy
+│           ├── --path <directory> # Target directory path
+│           ├── --recursive        # Search subdirectories
+│           └── --json             # Output in JSON format
 ```
 
 ## 🎯 Usage Examples
@@ -192,6 +221,33 @@ anitorrent subtitle extract --file video.mkv --all
 
 # Compare with PeerTube playlist
 anitorrent subtitle extract 123 --track 0
+
+# AI translate subtitle file
+anitorrent subtitle translate subtitles.ass
+
+# Translate all .ass files in current directory
+anitorrent subtitle translate
+
+# Translate with custom output and prompt
+anitorrent subtitle translate subtitles.ass --output translated.ass --prompt custom-prompt.xml
+
+# Translate with dialog limit
+anitorrent subtitle translate subtitles.ass --max-dialogs 50
+
+# Rename subtitle files using anitomy parsing
+anitorrent subtitle rename --anitomy
+
+# Rename using PeerTube playlist order
+anitorrent subtitle rename 123 --playlist --folder /path/to/subtitles
+
+# Add prefix and suffix to subtitle files
+anitorrent subtitle rename --prefix "MyAnime_" --suffix "_ESP"
+
+# Replace text in subtitle filenames
+anitorrent subtitle rename --replace "old,new"
+
+# Preview subtitle renaming
+anitorrent subtitle rename --dry-run
 ```
 
 ### File Upload
@@ -235,6 +291,36 @@ anitorrent peertube get 456
 
 # List recent videos
 anitorrent peertube list --limit 20
+
+# Create smart playlist from recent videos
+anitorrent peertube playlist --count 300
+```
+
+### File Management
+```bash
+# Batch rename files and folders (preview mode)
+anitorrent files rename --dry-run
+
+# Rename files and folders in current directory
+anitorrent files rename
+
+# Rename files in specific directory starting from episode 5
+anitorrent files rename --path /path/to/episodes --start 5
+
+# Preview changes for specific directory
+anitorrent files rename --path /path/to/episodes --dry-run
+
+# Parse anime file names with anitomy
+anitorrent files parse
+
+# Parse specific file
+anitorrent files parse "My.Anime.S01E01.1080p.mkv"
+
+# Parse files in directory with subdirectories
+anitorrent files parse --path /anime/folder --recursive
+
+# Get JSON output for parsing
+anitorrent files parse --json
 ```
 
 ## ⚙️ Configuration
@@ -259,6 +345,9 @@ This means you only need to configure once, and it works from any directory!
 **PeerTube:**
 - Username
 - Password
+
+**AI Translation (Optional):**
+- Claude API Key
 
 ### Optional Configuration
 - R2 Public Domain (default: https://cdn.anitorrent.com)
@@ -287,6 +376,125 @@ This means you only need to configure once, and it works from any directory!
 - `256k` - 256 kbps
 - `320k` - 320 kbps
 
+## 🤖 AI Subtitle Translation
+
+The AI translation feature uses Claude AI to translate subtitle files with context-aware processing:
+
+### Features:
+- **Smart Context**: Groups dialog lines for better translation accuracy
+- **Batch Processing**: Translate all .ass files in a directory
+- **Custom Prompts**: Use custom system prompts for specific translation styles
+- **Progress Tracking**: Real-time progress with detailed feedback
+- **Error Handling**: Robust error handling with retry mechanisms
+
+### Translation Workflow:
+1. **Parse**: Extracts dialog lines from .ass subtitle files
+2. **Group**: Organizes lines into logical groups for context
+3. **Translate**: Uses Claude AI to translate each group
+4. **Reconstruct**: Rebuilds the subtitle file with translations
+5. **Save**: Outputs translated file with `_translated` suffix
+
+### Custom Prompts:
+Create custom translation prompts by placing them in XML files:
+```xml
+<system>
+You are a professional subtitle translator specializing in anime.
+Translate the following Japanese subtitles to Spanish.
+Maintain the original timing and formatting.
+Use natural, conversational Spanish appropriate for the target audience.
+</system>
+```
+
+## 🎯 Smart Playlist Creation
+
+The playlist feature automatically creates organized playlists from your PeerTube videos:
+
+### How it works:
+1. **Fetch Videos**: Downloads recent videos from PeerTube (configurable count)
+2. **Parse Names**: Uses anitomy to extract anime metadata from video names
+3. **Group by Series**: Organizes videos by anime title and season
+4. **Interactive Selection**: Presents a list of found anime series
+5. **Create Playlist**: Automatically creates and populates the playlist
+6. **Episode Ordering**: Adds videos in correct episode order
+
+### Example Workflow:
+```bash
+anitorrent peertube playlist --count 500
+```
+
+This will:
+- Fetch the last 500 videos from PeerTube
+- Parse them to find anime series (e.g., "Jujutsu Kaisen Season 2")
+- Show you a list like:
+  - Jujutsu Kaisen - Season 2 (24 episodes)
+  - One Piece - Season 1 (15 episodes)
+  - Attack on Titan - Season 4 (12 episodes)
+- Let you select which series to convert into a playlist
+- Create the playlist with proper episode ordering
+
+## 📁 Batch File Rename
+
+The `files rename` command is designed to intelligently rename episode files and their containing folders, adjusting episode numbers sequentially starting from 1 (or a custom starting number).
+
+### How it works:
+
+1. **Scans** the target directory for subdirectories containing video files
+2. **Analyzes** each video file using anitomy to extract episode information
+3. **Generates** new filenames with sequential episode numbers (E01, E02, E03, etc.)
+4. **Renames** both the video files and their containing folders
+5. **Preserves** all metadata like anime title, season, resolution, release group, etc.
+
+### Example Structure:
+
+**Before:**
+```
+/Episodes/
+├── E25/
+│   └── Jujutsu Kaisen S02E25 [1080p] [SubsPlease].mkv
+├── E26/
+│   └── Jujutsu Kaisen S02E26 [1080p] [SubsPlease].mkv
+└── E27/
+    └── Jujutsu Kaisen S02E27 [1080p] [SubsPlease].mkv
+```
+
+**After:**
+```
+/Episodes/
+├── E01/
+│   └── Jujutsu Kaisen S02E01 [1080p] [SubsPlease].mkv
+├── E02/
+│   └── Jujutsu Kaisen S02E02 [1080p] [SubsPlease].mkv
+└── E03/
+    └── Jujutsu Kaisen S02E03 [1080p] [SubsPlease].mkv
+```
+
+### Safety Features:
+
+- **Preview Mode**: Use `--dry-run` to see changes before applying them
+- **Interactive Confirmation**: Always asks for confirmation before making changes
+- **Error Handling**: Reports any issues during the rename process
+- **Detailed Logging**: Shows exactly what will be changed and why
+
+## 🔍 File Parsing
+
+The `files parse` command uses anitomy to extract detailed metadata from anime file names:
+
+### Extracted Information:
+- **Anime Title**: The main series name
+- **Season**: Season number (if available)
+- **Episode**: Episode number
+- **Year**: Release year
+- **Resolution**: Video quality (720p, 1080p, etc.)
+- **Source**: Source type (BluRay, WEB, etc.)
+- **Audio Language**: Audio track language
+- **Subtitle Language**: Subtitle language
+- **Release Group**: Fansub or release group
+- **File Extension**: File format
+
+### Output Formats:
+- **Standard**: Human-readable colored output
+- **JSON**: Machine-readable JSON format for scripting
+
 ## 🌟 Global Options
 
 | Option | Description | Example |
@@ -307,22 +515,26 @@ anitorrent-cli/
 │   │   ├── config.js          # Configuration management
 │   │   ├── video.js           # Video processing operations
 │   │   ├── audio.js           # Audio track management
-│   │   ├── subtitle.js        # Subtitle extraction
+│   │   ├── subtitle.js        # Subtitle extraction & AI translation
 │   │   ├── upload.js          # File upload operations
-│   │   └── peertube.js        # PeerTube management
+│   │   ├── peertube.js        # PeerTube management & playlists
+│   │   └── files.js           # File management & parsing
 │   ├── services/              # Core services
 │   │   ├── s3-service.js      # Cloudflare R2/S3 operations
 │   │   ├── peertube-service.js # PeerTube API integration
 │   │   ├── video-service.js   # Video processing service
 │   │   ├── audio-service.js   # Audio processing service
 │   │   ├── subtitle-service.js # Subtitle processing
+│   │   ├── translation-service.js # AI translation service
+│   │   ├── file-service.js    # File management service
 │   │   └── anitorrent-service.js # AniList integration
 │   └── utils/                 # Utilities
 │       ├── logger.js          # Logging system
 │       ├── config.js          # Configuration management
 │       └── validators.js      # Input validation
 ├── data/
-│   └── intro.mp4              # Default intro video
+│   ├── intro.mp4              # Default intro video
+│   └── translate-prompt.xml   # Default translation prompt
 ├── package.json
 └── README.md
 ```
@@ -340,6 +552,11 @@ anitorrent config setup
 ```bash
 anitorrent config test
 ```
+
+**AI Translation not working:**
+- Ensure Claude API key is configured
+- Check API key validity in configuration
+- Verify .ass file format is correct
 
 **File not found:**
 - Use absolute paths or ensure files exist
@@ -411,4 +628,5 @@ MIT License - see LICENSE file for details.
 - UI powered by [Inquirer.js](https://github.com/SBoudrias/Inquirer.js/) and [Ora](https://github.com/sindresorhus/ora)
 - Video processing with [FFmpeg](https://ffmpeg.org/) and [MKVToolNix](https://mkvtoolnix.download/)
 - Anime parsing with [Anitomyscript](https://github.com/Xtansia/anitomyscript)
+- AI Translation with [Claude AI](https://www.anthropic.com/claude)
 - Integrates with [PeerTube](https://joinpeertube.org/), [Cloudflare R2](https://developers.cloudflare.com/r2/), and [AniList](https://anilist.co/) 

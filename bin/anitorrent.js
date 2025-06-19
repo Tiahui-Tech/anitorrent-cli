@@ -12,6 +12,7 @@ const audioCommand = require('../src/commands/audio');
 const uploadCommand = require('../src/commands/upload');
 const peertubeCommand = require('../src/commands/peertube');
 const videoCommand = require('../src/commands/video');
+const filesCommand = require('../src/commands/files');
 
 const program = new Command();
 
@@ -21,7 +22,6 @@ program
   .version(packageJson.version);
 
 program
-  .option('--verbose, -v', 'verbose output')
   .option('--quiet, -q', 'quiet mode')
   .option('--config <file>', 'custom config file');
 
@@ -31,6 +31,7 @@ program.addCommand(audioCommand);
 program.addCommand(uploadCommand);
 program.addCommand(peertubeCommand);
 program.addCommand(videoCommand);
+program.addCommand(filesCommand);
 
 program.on('command:*', () => {
   console.error(chalk.red(`Invalid command: ${program.args.join(' ')}`));

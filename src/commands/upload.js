@@ -1,6 +1,7 @@
 const { Command } = require('commander');
 const ora = require('ora');
 const path = require('path');
+const inquirer = require('inquirer');
 const ConfigManager = require('../utils/config');
 const { Logger } = require('../utils/logger');
 const Validators = require('../utils/validators');
@@ -9,6 +10,43 @@ const PeerTubeService = require('../services/peertube-service');
 const AniTorrentService = require('../services/anitorrent-service');
 const TorrentService = require('../services/torrent-service');
 const anitomy = require('anitomyscript');
+
+async function scanDirectoryForVideos(dir, recursive = false, logger) {
+  const fs = require('fs').promises;
+  const foundFiles = [];
+
+  async function scanDir(currentDir, relativePath = '') {
+    try {
+      const entries = await fs.readdir(currentDir, { withFileTypes: true });
+      
+      for (const entry of entries) {
+        const fullPath = path.join(currentDir, entry.name);
+        const relativeFilePath = path.join(relativePath, entry.name);
+        
+        if (entry.isFile()) {
+          if (Validators.isValidVideoFile(fullPath)) {
+            const stats = await fs.stat(fullPath);
+            foundFiles.push({
+              originalPath: relativeFilePath,
+              resolvedPath: fullPath,
+              fileName: entry.name,
+              downloadedFromTorrent: false,
+              size: stats.size,
+              directory: relativePath || '.'
+            });
+          }
+        } else if (entry.isDirectory() && recursive) {
+          await scanDir(fullPath, relativeFilePath);
+        }
+      }
+    } catch (error) {
+      // Skip verbose logging here since scanDirectoryForVideos doesn't have access to isLogs
+    }
+  }
+
+  await scanDir(dir);
+  return foundFiles;
+}
 
 const uploadCommand = new Command('upload');
 uploadCommand.description('File upload operations');
@@ -20,8 +58,9 @@ uploadCommand
   .option('--name <name>', 'custom name for uploaded file')
   .option('--timestamp', 'add timestamp to filename')
   .action(async (file, options) => {
+    const isLogs = uploadCommand.parent?.opts()?.logs || false;
     const logger = new Logger({ 
-      verbose: uploadCommand.parent?.opts()?.verbose || false,
+      verbose: false,
       quiet: uploadCommand.parent?.opts()?.quiet || false
     });
 
@@ -39,7 +78,9 @@ uploadCommand
       }
 
       const resolvedFile = fileValidation.resolvedPath;
-      logger.verbose(`Using file: ${resolvedFile}`);
+      if (isLogs) {
+        logger.info(`Using file: ${resolvedFile}`);
+      }
 
       const config = new ConfigManager();
       config.validateRequired();
@@ -103,9 +144,11 @@ uploadCommand
   .option('--wait <minutes>', 'max wait time for processing', '120')
   .option('--keep-r2', 'keep file in R2 after import')
   .option('--anime-id <id>', 'AniList anime ID for episode update')
+  .option('--sub-folders', 'search for video files in subfolders as well')
   .action(async (file, options) => {
+    const isLogs = uploadCommand.parent?.opts()?.logs || false;
     const logger = new Logger({ 
-      verbose: uploadCommand.parent?.opts()?.verbose || false,
+      verbose: false,
       quiet: uploadCommand.parent?.opts()?.quiet || false
     });
 
@@ -120,34 +163,63 @@ uploadCommand
     try {
       if (!file) {
         const currentDir = process.cwd();
+        const searchSubfolders = options.subFolders;
         
-        logger.header('Scanning Current Directory for Video Files');
+        logger.header(`Scanning ${searchSubfolders ? 'Directory Tree' : 'Current Directory'} for Video Files`);
         logger.info(`Directory: ${currentDir}`);
+        if (searchSubfolders) {
+          logger.info('Including subfolders: Yes');
+        }
         logger.separator();
 
-        const fs = require('fs').promises;
-        const files = await fs.readdir(currentDir);
-        const videoFiles = files.filter(fileName => {
-          const fullPath = path.join(currentDir, fileName);
-          return Validators.isValidVideoFile(fullPath);
-        });
+        const scanSpinner = ora('Scanning for video files...').start();
+        filesToProcess = await scanDirectoryForVideos(currentDir, searchSubfolders, logger);
+        scanSpinner.succeed('Scan completed');
 
-        if (videoFiles.length === 0) {
-          logger.error('No video files found in the current directory');
+        if (filesToProcess.length === 0) {
+          logger.error(`No video files found in the ${searchSubfolders ? 'directory tree' : 'current directory'}`);
           process.exit(1);
         }
 
-        filesToProcess = videoFiles.map(fileName => ({
-          originalPath: fileName,
-          resolvedPath: path.join(currentDir, fileName),
-          fileName: fileName,
-          downloadedFromTorrent: false
-        }));
-
         logger.success(`Found ${filesToProcess.length} video file(s):`);
-        filesToProcess.forEach((fileInfo, index) => {
-          logger.info(`${index + 1}. ${fileInfo.fileName}`, 1);
+        
+        const groupedFiles = {};
+        filesToProcess.forEach((fileInfo) => {
+          if (!groupedFiles[fileInfo.directory]) {
+            groupedFiles[fileInfo.directory] = [];
+          }
+          groupedFiles[fileInfo.directory].push(fileInfo);
         });
+
+        Object.keys(groupedFiles).sort().forEach((dir) => {
+          logger.info(`📁 ${dir}:`, 1);
+          groupedFiles[dir].forEach((fileInfo, index) => {
+            const fileSize = Validators.formatFileSize(fileInfo.size);
+            logger.info(`  ${index + 1}. ${fileInfo.fileName} (${fileSize})`, 2);
+          });
+        });
+        
+        logger.separator();
+        
+        const totalSize = filesToProcess.reduce((sum, file) => sum + file.size, 0);
+        logger.info(`Total files: ${filesToProcess.length}`);
+        logger.info(`Total size: ${Validators.formatFileSize(totalSize)}`);
+        logger.separator();
+
+        const { proceed } = await inquirer.prompt([
+          {
+            type: 'confirm',
+            name: 'proceed',
+            message: 'Do you want to proceed with uploading these files?',
+            default: false
+          }
+        ]);
+
+        if (!proceed) {
+          logger.info('Upload cancelled by user');
+          process.exit(0);
+        }
+
         logger.separator();
 
       } else if (options.torrent) {
@@ -212,7 +284,9 @@ uploadCommand
           downloadedFromTorrent: false
         }];
 
-        logger.verbose(`Using file: ${fileValidation.resolvedPath}`);
+        if (isLogs) {
+          logger.info(`Using file: ${fileValidation.resolvedPath}`);
+        }
       }
 
       const config = new ConfigManager();
@@ -328,7 +402,9 @@ uploadCommand
                   videoName = path.parse(fileInfo.resolvedPath).name;
                 }
               } catch (error) {
-                logger.verbose(`Failed to parse filename with anitomy: ${error.message}`);
+                                 if (isLogs) {
+                   logger.info(`Failed to parse filename with anitomy: ${error.message}`);
+                 }
                 videoName = path.parse(fileInfo.resolvedPath).name;
               }
             }
@@ -371,7 +447,10 @@ uploadCommand
                 const episodeSpinner = ora('Parsing filename and updating episode...').start();
                 
                 const fileName = fileInfo.fileName;
+                logger.info('fileName: ' + fileName);
                 const anitomyResult = await anitomy(fileName);
+
+                logger.info('anitomyResult: ' + JSON.stringify(anitomyResult, null, 2));
                 
                 if (!anitomyResult.episode_number) {
                   episodeSpinner.warn('Could not extract episode number from filename');
@@ -388,7 +467,9 @@ uploadCommand
                     const animeData = await anitorrentService.getAnimeById(animeId);
                     animeTitle = animeData.title?.english || animeData.title?.romaji || animeTitle;
                   } catch (error) {
-                    logger.verbose(`Could not fetch anime data, using parsed title: ${error.message}`);
+                                         if (isLogs) {
+                       logger.info(`Could not fetch anime data, using parsed title: ${error.message}`);
+                     }
                   }
                   
                   const thumbnailUrl = video.thumbnailPath 
@@ -548,7 +629,9 @@ uploadCommand
           });
           torrentService.destroy();
         } catch (cleanupError) {
-          logger.verbose(`Failed to cleanup torrent files: ${cleanupError.message}`);
+                                             if (isLogs) {
+                         logger.info(`Failed to cleanup torrent files: ${cleanupError.message}`);
+                       }
         }
       }
       

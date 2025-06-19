@@ -12,8 +12,9 @@ audioCommand
   .description('List audio tracks from a video file')
   .argument('<file>', 'video file path')
   .action(async (file, options) => {
+    const isLogs = audioCommand.parent?.opts()?.logs || false;
     const logger = new Logger({ 
-      verbose: audioCommand.parent?.opts()?.verbose || false,
+      verbose: false,
       quiet: audioCommand.parent?.opts()?.quiet || false
     });
 
@@ -62,13 +63,13 @@ audioCommand
           logger.info(`  Bitrate: ${Math.round(track.bitrate / 1000)} kbps`, 1);
         }
         
-        if (logger.verbose) {
-          logger.verbose(`  Stream Index: ${track.index}`, 1);
+        if (isLogs) {
+          logger.info(`  Stream Index: ${track.index}`, 1);
           
           if (track.allTags) {
-            logger.verbose(`  All Tags:`, 1);
+            logger.info(`  All Tags:`, 1);
             Object.entries(track.allTags).forEach(([key, value]) => {
-              logger.verbose(`    ${key}: ${value}`, 1);
+              logger.info(`    ${key}: ${value}`, 1);
             });
           }
           
@@ -77,7 +78,7 @@ audioCommand
               .filter(([key, value]) => value === 1)
               .map(([key]) => key);
             if (dispositionFlags.length > 0) {
-              logger.verbose(`  Disposition: ${dispositionFlags.join(', ')}`, 1);
+              logger.info(`  Disposition: ${dispositionFlags.join(', ')}`, 1);
             }
           }
         }
@@ -105,8 +106,9 @@ audioCommand
   .option('--advanced', 'use advanced extraction with mkvmerge (better track naming)')
   .option('--prefix <prefix>', 'custom prefix for output files (default: video filename)')
   .action(async (file, options) => {
+    const isLogs = audioCommand.parent?.opts()?.logs || false;
     const logger = new Logger({ 
-      verbose: audioCommand.parent?.opts()?.verbose || false,
+      verbose: false,
       quiet: audioCommand.parent?.opts()?.quiet || false
     });
 
@@ -204,12 +206,12 @@ audioCommand
 
               logger.success(`Advanced extraction completed: ${successful} successful, ${failed} failed`);
 
-              if (logger.verbose) {
+              if (isLogs) {
                 results.forEach(result => {
                   if (result.success) {
-                    logger.verbose(`✓ Track ${result.trackIndex} (${result.trackInfo.language}) → ${result.outputFile}`, 1);
+                    logger.info(`✓ Track ${result.trackIndex} (${result.trackInfo.language}) → ${result.outputFile}`, 1);
                   } else {
-                    logger.verbose(`✗ Track ${result.trackIndex}: ${result.error}`, 1);
+                    logger.info(`✗ Track ${result.trackIndex}: ${result.error}`, 1);
                   }
                 });
               }
@@ -241,12 +243,12 @@ audioCommand
 
             logger.success(`Extraction completed: ${successful} successful, ${failed} failed`);
 
-            if (logger.verbose) {
+            if (isLogs) {
               results.forEach(result => {
                 if (result.success) {
-                  logger.verbose(`✓ Track ${result.track.trackNumber} (${result.track.language}) → ${result.outputFile}`, 1);
+                  logger.info(`✓ Track ${result.track.trackNumber} (${result.track.language}) → ${result.outputFile}`, 1);
                 } else {
-                  logger.verbose(`✗ Track ${result.track.trackNumber}: ${result.error}`, 1);
+                  logger.info(`✗ Track ${result.track.trackNumber}: ${result.error}`, 1);
                 }
               });
             }
@@ -331,12 +333,12 @@ audioCommand
         logger.separator();
         logger.success(`Extraction completed: ${successful} successful, ${failed} failed`);
 
-        if (logger.verbose) {
+        if (isLogs) {
           results.forEach(result => {
             if (result.success) {
-              logger.verbose(`✓ ${result.filename} → ${result.outputFile}`, 1);
+              logger.info(`✓ ${result.filename} → ${result.outputFile}`, 1);
             } else {
-              logger.verbose(`✗ ${result.filename}: ${result.error}`, 1);
+              logger.info(`✗ ${result.filename}: ${result.error}`, 1);
             }
           });
         }

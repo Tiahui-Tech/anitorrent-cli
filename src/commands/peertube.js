@@ -1,5 +1,7 @@
 const { Command } = require('commander');
 const ora = require('ora');
+const inquirer = require('inquirer');
+const anitomy = require('anitomyscript');
 const ConfigManager = require('../utils/config');
 const { Logger } = require('../utils/logger');
 const Validators = require('../utils/validators');
@@ -18,8 +20,9 @@ peertubeCommand
   .option('--password <password>', 'video password')
   .option('--wait <minutes>', 'wait for processing to complete', '120')
   .action(async (url, options) => {
+    const isLogs = peertubeCommand.parent?.opts()?.logs || false;
     const logger = new Logger({ 
-      verbose: peertubeCommand.parent?.opts()?.verbose || false,
+      verbose: false,
       quiet: peertubeCommand.parent?.opts()?.quiet || false
     });
 
@@ -138,8 +141,9 @@ peertubeCommand
   .description('Check import status')
   .argument('<import-id>', 'import ID to check')
   .action(async (importId) => {
+    const isLogs = peertubeCommand.parent?.opts()?.logs || false;
     const logger = new Logger({ 
-      verbose: peertubeCommand.parent?.opts()?.verbose || false,
+      verbose: false,
       quiet: peertubeCommand.parent?.opts()?.quiet || false
     });
 
@@ -179,8 +183,9 @@ peertubeCommand
   .description('Get video information by ID')
   .argument('<video-id>', 'video ID to retrieve')
   .action(async (videoId) => {
+    const isLogs = peertubeCommand.parent?.opts()?.logs || false;
     const logger = new Logger({ 
-      verbose: peertubeCommand.parent?.opts()?.verbose || false,
+      verbose: false,
       quiet: peertubeCommand.parent?.opts()?.quiet || false
     });
 
@@ -240,8 +245,9 @@ peertubeCommand
   .description('List recent videos')
   .option('--limit <number>', 'number of videos to list', '10')
   .action(async (options) => {
+    const isLogs = peertubeCommand.parent?.opts()?.logs || false;
     const logger = new Logger({ 
-      verbose: peertubeCommand.parent?.opts()?.verbose || false,
+      verbose: false,
       quiet: peertubeCommand.parent?.opts()?.quiet || false
     });
 
@@ -266,7 +272,7 @@ peertubeCommand
       const spinner = ora('Fetching videos...').start();
       
       try {
-        const data = await peertubeService.listVideos(limit);
+        const data = await peertubeService.listVideos(limit, 0);
         spinner.succeed(`Found ${data.total} total videos`);
 
         logger.info(`Showing ${data.data.length} videos:`);
@@ -289,6 +295,185 @@ peertubeCommand
 
     } catch (error) {
       logger.error(`List videos failed: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+peertubeCommand
+  .command('playlist')
+  .description('Create playlist from recent videos')
+  .option('--count <number>', 'number of videos to fetch (max per request: 100)', '200')
+  .action(async (options) => {
+    const isLogs = peertubeCommand.parent?.opts()?.logs || false;
+    const logger = new Logger({ 
+      verbose: false,
+      quiet: peertubeCommand.parent?.opts()?.quiet || false
+    });
+
+    try {
+      const totalCount = parseInt(options.count);
+      
+      if (isNaN(totalCount) || totalCount < 1) {
+        logger.error('Invalid count (must be a positive number)');
+        process.exit(1);
+      }
+
+      const config = new ConfigManager();
+      config.validateRequired();
+      
+      const peertubeConfig = config.getPeerTubeConfig();
+      const peertubeService = new PeerTubeService(peertubeConfig);
+      const defaults = config.getDefaults();
+      const channelId = await config.getDefaultChannelId();
+
+      logger.header('PeerTube Playlist Creator');
+      logger.info(`Fetching ${totalCount} videos...`);
+      logger.separator();
+
+      const spinner = ora('Fetching videos from PeerTube...').start();
+      
+      try {
+        const allVideos = [];
+        const requestsNeeded = Math.ceil(totalCount / 100);
+        
+        for (let i = 0; i < requestsNeeded; i++) {
+          const limit = Math.min(100, totalCount - (i * 100));
+          const start = i * 100;
+          
+          const data = await peertubeService.listVideos(limit, start);
+          allVideos.push(...data.data);
+          
+          if (data.data.length < limit) break;
+        }
+
+        spinner.succeed(`Fetched ${allVideos.length} videos`);
+
+        logger.info('Parsing video names with anitomy...');
+        const parseSpinner = ora('Analyzing anime information...').start();
+
+        const animeGroups = {};
+        
+        for (const video of allVideos) {
+          try {
+            const parsed = await anitomy(video.name);
+            
+            if (parsed.anime_title) {
+              const animeTitle = parsed.anime_title;
+              const season = parsed.anime_season || '1';
+              const episode = parsed.episode_number || '1';
+              
+              const groupKey = `${animeTitle} - Season ${season}`;
+              
+              if (!animeGroups[groupKey]) {
+                animeGroups[groupKey] = {
+                  title: animeTitle,
+                  season: season,
+                  videos: []
+                };
+              }
+              
+              animeGroups[groupKey].videos.push({
+                ...video,
+                episode: parseInt(episode) || 1
+              });
+            }
+          } catch (error) {
+            // Skip videos that can't be parsed
+          }
+        }
+
+        const groupKeys = Object.keys(animeGroups);
+        
+        if (groupKeys.length === 0) {
+          parseSpinner.fail('No anime series found in the videos');
+          return;
+        }
+
+        parseSpinner.succeed(`Found ${groupKeys.length} anime series`);
+
+        groupKeys.forEach(key => {
+          animeGroups[key].videos.sort((a, b) => a.episode - b.episode);
+        });
+
+        logger.separator();
+        logger.info('Available anime series:');
+        groupKeys.forEach((key, index) => {
+          const group = animeGroups[key];
+          logger.info(`${index + 1}. ${key} (${group.videos.length} episodes)`, 1);
+        });
+
+        const { selectedGroup } = await inquirer.prompt([
+          {
+            type: 'list',
+            name: 'selectedGroup',
+            message: 'Select an anime series to create a playlist:',
+            choices: groupKeys.map(key => ({
+              name: `${key} (${animeGroups[key].videos.length} episodes)`,
+              value: key
+            }))
+          }
+        ]);
+
+        const selectedAnime = animeGroups[selectedGroup];
+        
+        logger.separator();
+        logger.header(`Creating Playlist: ${selectedGroup}`);
+
+        const createSpinner = ora('Creating playlist...').start();
+        
+        try {
+          const playlistResult = await peertubeService.createPlaylist({
+            displayName: selectedGroup,
+            privacy: 1,
+            videoChannelId: channelId
+          });
+
+          createSpinner.succeed('Playlist created successfully');
+          
+          logger.info('Playlist Details:');
+          logger.info(`ID: ${playlistResult.videoPlaylist.id}`, 1);
+          logger.info(`UUID: ${playlistResult.videoPlaylist.uuid}`, 1);
+          logger.info(`Short UUID: ${playlistResult.videoPlaylist.shortUUID}`, 1);
+
+          logger.separator();
+          logger.info('Adding videos to playlist...');
+
+          const addSpinner = ora('Adding videos in order...').start();
+          
+          for (let i = 0; i < selectedAnime.videos.length; i++) {
+            const video = selectedAnime.videos[i];
+            
+            try {
+              await peertubeService.addVideoToPlaylist(
+                playlistResult.videoPlaylist.id,
+                video.id
+              );
+              
+              addSpinner.text = `Added episode ${video.episode}: ${video.name}`;
+              
+            } catch (error) {
+              logger.warning(`Failed to add video ${video.id}: ${error.message}`);
+            }
+          }
+
+          addSpinner.succeed(`Added ${selectedAnime.videos.length} videos to playlist`);
+
+          logger.separator();
+          logger.success('Playlist created successfully!');
+          logger.info(`Playlist URL: ${peertubeConfig.apiUrl.replace('/api/v1', '')}/video-playlists/${playlistResult.videoPlaylist.shortUUID}`);
+
+        } catch (error) {
+          createSpinner.fail(`Failed to create playlist: ${error.message}`);
+          process.exit(1);
+        }
+
+      } catch (error) {
+        spinner.fail(`Failed to fetch videos: ${error.message}`);
+        process.exit(1);
+      }
+
+    } catch (error) {
+      logger.error(`Playlist creation failed: ${error.message}`);
       process.exit(1);
     }
   });
