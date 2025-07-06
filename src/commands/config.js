@@ -148,7 +148,7 @@ configCommand
               default: () => config.get('PEERTUBE_USERNAME') !== 'your_username' ? config.get('PEERTUBE_USERNAME') : undefined
             },
             {
-              type: 'password',
+              type: 'input',
               name: 'PEERTUBE_PASSWORD',
               message: 'PeerTube Password (required):',
               validate: input => input.trim() !== '' || 'Password is required',
