@@ -13,11 +13,12 @@ const uploadCommand = require('../src/commands/upload');
 const peertubeCommand = require('../src/commands/peertube');
 const videoCommand = require('../src/commands/video');
 const filesCommand = require('../src/commands/files');
+const rssCommand = require('../src/commands/rss');
 
 const program = new Command();
 
 program
-  .name('anitorrent')
+  .name('anitlan')
   .description(packageJson.description)
   .version(packageJson.version);
 
@@ -32,6 +33,7 @@ program.addCommand(uploadCommand);
 program.addCommand(peertubeCommand);
 program.addCommand(videoCommand);
 program.addCommand(filesCommand);
+program.addCommand(rssCommand);
 
 program.on('command:*', () => {
   console.error(chalk.red(`Invalid command: ${program.args.join(' ')}`));

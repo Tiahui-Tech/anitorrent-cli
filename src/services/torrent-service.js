@@ -8,6 +8,8 @@ class TorrentService {
     this.client = null;
     this.logger = options.logger || new Logger({ verbose: false, quiet: false });
     this.downloadPath = options.downloadPath || path.join(os.tmpdir(), 'anitorrent-downloads');
+    this.seedingTorrents = [];
+    this.maxSeedingTorrents = options.maxSeedingTorrents || 10;
   }
 
   async initializeClient() {
@@ -32,7 +34,8 @@ class TorrentService {
       const {
         selectLargestFile = true,
         timeout = 300000,
-        onProgress = null
+        onProgress = null,
+        keepSeeding = false
       } = options;
 
       const timeoutId = setTimeout(() => {
@@ -81,11 +84,17 @@ class TorrentService {
           try {
             await fs.access(filePath);
             this.logger.verbose(`Download completed: ${filePath}`);
+            
+            if (keepSeeding) {
+              this.addToSeedingQueue(torrent, selectedFile);
+            }
+            
             resolve({
               filePath,
               fileName: selectedFile.name,
               fileSize: selectedFile.length,
-              torrentHash: torrent.infoHash
+              torrentHash: torrent.infoHash,
+              torrent: torrent
             });
           } catch (error) {
             reject(new Error(`Downloaded file not found: ${filePath}`));
@@ -105,6 +114,86 @@ class TorrentService {
         reject(new Error(`WebTorrent client error: ${error.message}`));
       });
     });
+  }
+
+  addToSeedingQueue(torrent, selectedFile) {
+    const filePath = path.join(this.downloadPath, selectedFile.path);
+    
+    const seedingInfo = {
+      torrent: torrent,
+      fileName: selectedFile.name,
+      filePath: filePath,
+      hash: torrent.infoHash,
+      addedAt: new Date()
+    };
+
+    this.seedingTorrents.push(seedingInfo);
+    this.logger.verbose(`Added to seeding queue: ${selectedFile.name}`);
+
+    if (this.seedingTorrents.length > this.maxSeedingTorrents) {
+      const oldestSeeding = this.seedingTorrents.shift();
+      this.logger.verbose(`Removing oldest seeding torrent: ${oldestSeeding.fileName}`);
+      
+      // Remove from WebTorrent client
+      this.client.remove(oldestSeeding.hash);
+      
+      // Delete the physical file
+      this.cleanupFile(oldestSeeding.filePath).catch(error => {
+        this.logger.verbose(`Failed to cleanup old seeding file: ${error.message}`);
+      });
+    }
+  }
+
+  async stopSeeding(torrentHash, deleteFile = true) {
+    const index = this.seedingTorrents.findIndex(s => s.hash === torrentHash);
+    if (index !== -1) {
+      const seedingInfo = this.seedingTorrents.splice(index, 1)[0];
+      this.client.remove(torrentHash);
+      
+      if (deleteFile && seedingInfo.filePath) {
+        try {
+          await this.cleanupFile(seedingInfo.filePath);
+          this.logger.verbose(`Stopped seeding and deleted file: ${seedingInfo.fileName}`);
+        } catch (error) {
+          this.logger.verbose(`Stopped seeding but failed to delete file: ${error.message}`);
+        }
+      } else {
+        this.logger.verbose(`Stopped seeding: ${seedingInfo.fileName}`);
+      }
+      
+      return true;
+    }
+    return false;
+  }
+
+  getSeedingStatus() {
+    return this.seedingTorrents.map(s => ({
+      fileName: s.fileName,
+      filePath: s.filePath,
+      hash: s.hash,
+      addedAt: s.addedAt,
+      uploaded: s.torrent.uploaded,
+      downloaded: s.torrent.downloaded,
+      ratio: s.torrent.downloaded > 0 ? (s.torrent.uploaded / s.torrent.downloaded) : 0,
+      fileSize: s.torrent.length
+    }));
+  }
+
+  getSeedingStats() {
+    const totalFiles = this.seedingTorrents.length;
+    const totalSize = this.seedingTorrents.reduce((sum, s) => sum + (s.torrent.length || 0), 0);
+    const totalUploaded = this.seedingTorrents.reduce((sum, s) => sum + (s.torrent.uploaded || 0), 0);
+    const totalDownloaded = this.seedingTorrents.reduce((sum, s) => sum + (s.torrent.downloaded || 0), 0);
+    const avgRatio = totalDownloaded > 0 ? (totalUploaded / totalDownloaded) : 0;
+    
+    return {
+      totalFiles,
+      totalSize,
+      totalUploaded,
+      totalDownloaded,
+      avgRatio,
+      maxFiles: this.maxSeedingTorrents
+    };
   }
 
   async cleanupFile(filePath) {
@@ -140,11 +229,26 @@ class TorrentService {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   }
 
-  destroy() {
+  async destroy(cleanupFiles = false) {
+    if (cleanupFiles) {
+      // Clean up all seeding files
+      for (const seedingInfo of this.seedingTorrents) {
+        if (seedingInfo.filePath) {
+          try {
+            await this.cleanupFile(seedingInfo.filePath);
+            this.logger.verbose(`Cleaned up seeding file: ${seedingInfo.fileName}`);
+          } catch (error) {
+            this.logger.verbose(`Failed to cleanup seeding file: ${error.message}`);
+          }
+        }
+      }
+    }
+    
     if (this.client) {
       this.client.destroy();
       this.client = null;
     }
+    this.seedingTorrents = [];
   }
 }
 

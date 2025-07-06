@@ -112,7 +112,7 @@ class SubtitleService {
         let displayTitle = trackName;
         
         if (language === 'spa' || language === 'es') {
-            if (name.includes('es-419') || name.includes('latino') || name.includes('latin_america') || name.includes('latin america')) {
+            if (name.includes('es-419') || name.includes('latin')) {
                 detail = 'Latino (es-419)';
                 displayTitle = displayTitle || 'Español (Latino)';
             } else if (name.includes('es-es') || name.includes('españa') || name.includes('spain') || name.includes('castilian')) {
@@ -130,8 +130,7 @@ class SubtitleService {
                 
                 const hasLatinoTrack = spanishTracks.some(t => {
                     const tName = (t.properties?.track_name || '').toLowerCase();
-                    return tName.includes('es-419') || tName.includes('latino') || 
-                           tName.includes('latin_america') || tName.includes('latin america');
+                    return tName.includes('es-419') || tName.includes('latin');
                 });
                 
                 const hasEspañaTrack = spanishTracks.some(t => {
@@ -222,18 +221,35 @@ class SubtitleService {
         }
     }
 
-    async getLocalVideoFiles(directory = '.') {
-        try {
-            const files = await fs.readdir(directory);
-            return files.filter(file => 
-                file.endsWith('.mp4') || 
-                file.endsWith('.mkv') || 
-                file.endsWith('.avi') || 
-                file.endsWith('.mov')
-            ).map(file => path.join(directory, file));
-        } catch (error) {
-            throw new Error(`Error reading directory: ${error.message}`);
+    async getLocalVideoFiles(directory = '.', recursive = false) {
+        const foundFiles = [];
+
+        async function scanDir(currentDir, relativePath = '') {
+            try {
+                const entries = await fs.readdir(currentDir, { withFileTypes: true });
+                
+                for (const entry of entries) {
+                    const fullPath = path.join(currentDir, entry.name);
+                    const relativeFilePath = path.join(relativePath, entry.name);
+                    
+                    if (entry.isFile()) {
+                        const ext = path.extname(entry.name).toLowerCase();
+                        const videoExtensions = ['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.ts', '.mts'];
+                        
+                        if (videoExtensions.includes(ext)) {
+                            foundFiles.push(fullPath);
+                        }
+                    } else if (entry.isDirectory() && recursive) {
+                        await scanDir(fullPath, relativeFilePath);
+                    }
+                }
+            } catch (error) {
+                // Skip directories that can't be read
+            }
         }
+
+        await scanDir(directory);
+        return foundFiles;
     }
 
     async parseVideoName(videoName) {
@@ -399,8 +415,8 @@ class SubtitleService {
         }
     }
 
-    async extractAllLocalSubtitles(subtitleTrack = null, directory = '.') {
-        const localFiles = await this.getLocalVideoFiles(directory);
+    async extractAllLocalSubtitles(subtitleTrack = null, directory = '.', recursive = false) {
+        const localFiles = await this.getLocalVideoFiles(directory, recursive);
         
         if (localFiles.length === 0) {
             throw new Error(`No video files found in directory: ${directory}`);
@@ -534,8 +550,8 @@ class SubtitleService {
         return results;
     }
 
-    async extractAllSubtitlesFromFolder(directory = '.') {
-        const localFiles = await this.getLocalVideoFiles(directory);
+    async extractAllSubtitlesFromFolder(directory = '.', recursive = false) {
+        const localFiles = await this.getLocalVideoFiles(directory, recursive);
         
         if (localFiles.length === 0) {
             throw new Error(`No video files found in directory: ${directory}`);
@@ -592,9 +608,9 @@ class SubtitleService {
         }
     }
 
-    async extractFromPlaylist(playlistId, subtitleTrack = 0, apiUrl = 'https://peertube.anitorrent.com/api/v1', directory = '.', offsetMs = 0) {
+    async extractFromPlaylist(playlistId, subtitleTrack = 0, apiUrl = 'https://peertube.anitorrent.com/api/v1', directory = '.', offsetMs = 0, recursive = false) {
         const peertubeVideos = await this.fetchPlaylistVideos(playlistId, apiUrl);
-        const localFiles = await this.getLocalVideoFiles(directory);
+        const localFiles = await this.getLocalVideoFiles(directory, recursive);
         
         const parsedPeertubeVideos = [];
         for (const video of peertubeVideos) {
@@ -703,8 +719,8 @@ class SubtitleService {
         }
     }
 
-    async extractAllLocalSubtitlesWithTranslation(subtitleTrack = null, directory = '.', translationConfig = null, onProgress = null) {
-        const localFiles = await this.getLocalVideoFiles(directory);
+    async extractAllLocalSubtitlesWithTranslation(subtitleTrack = null, directory = '.', translationConfig = null, onProgress = null, recursive = false) {
+        const localFiles = await this.getLocalVideoFiles(directory, recursive);
         
         if (localFiles.length === 0) {
             throw new Error(`No video files found in directory: ${directory}`);

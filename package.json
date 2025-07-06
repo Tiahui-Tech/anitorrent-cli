@@ -1,13 +1,13 @@
 {
   "name": "@tiahui/anitorrent-cli",
-  "version": "1.0.7",
+  "version": "1.1.2",
   "description": "CLI tool for video management with PeerTube and Cloudflare R2",
   "main": "src/index.js",
   "bin": {
-    "anitorrent": "./bin/anitorrent.js"
+    "anitlan": "./bin/anitlan.js"
   },
   "scripts": {
-    "dev": "node bin/anitorrent.js"
+    "dev": "node bin/anitlan.js"
   },
   "keywords": [
     "peertube",

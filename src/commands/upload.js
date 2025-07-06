@@ -9,6 +9,8 @@ const S3Service = require('../services/s3-service');
 const PeerTubeService = require('../services/peertube-service');
 const AniTorrentService = require('../services/anitorrent-service');
 const TorrentService = require('../services/torrent-service');
+const SubtitleService = require('../services/subtitle-service');
+const UploadService = require('../services/upload-service');
 const anitomy = require('anitomyscript');
 
 async function scanDirectoryForVideos(dir, recursive = false, logger) {
@@ -41,6 +43,42 @@ async function scanDirectoryForVideos(dir, recursive = false, logger) {
       }
     } catch (error) {
       // Skip verbose logging here since scanDirectoryForVideos doesn't have access to isLogs
+    }
+  }
+
+  await scanDir(dir);
+  return foundFiles;
+}
+
+async function scanDirectoryForSubtitles(dir, recursive = false, logger) {
+  const fs = require('fs').promises;
+  const foundFiles = [];
+
+  async function scanDir(currentDir, relativePath = '') {
+    try {
+      const entries = await fs.readdir(currentDir, { withFileTypes: true });
+      
+      for (const entry of entries) {
+        const fullPath = path.join(currentDir, entry.name);
+        const relativeFilePath = path.join(relativePath, entry.name);
+        
+        if (entry.isFile()) {
+          if (Validators.isValidSubtitleFile(fullPath)) {
+            const stats = await fs.stat(fullPath);
+            foundFiles.push({
+              originalPath: relativeFilePath,
+              resolvedPath: fullPath,
+              fileName: entry.name,
+              size: stats.size,
+              directory: relativePath || '.'
+            });
+          }
+        } else if (entry.isDirectory() && recursive) {
+          await scanDir(fullPath, relativeFilePath);
+        }
+      }
+    } catch (error) {
+      // Skip verbose logging here since scanDirectoryForSubtitles doesn't have access to isLogs
     }
   }
 
@@ -145,6 +183,8 @@ uploadCommand
   .option('--keep-r2', 'keep file in R2 after import')
   .option('--anime-id <id>', 'AniList anime ID for episode update')
   .option('--sub-folders', 'search for video files in subfolders as well')
+  .option('--use-title', 'use the title of the video for the upload name')
+  .option('--track <number>', 'subtitle track number for extraction (if not specified, auto-finds Spanish Latino)')
   .action(async (file, options) => {
     const isLogs = uploadCommand.parent?.opts()?.logs || false;
     const logger = new Logger({ 
@@ -227,39 +267,16 @@ uploadCommand
         logger.info(`Torrent URL/Magnet: ${file}`);
         logger.separator();
 
-        torrentService = new TorrentService({ logger });
-        await torrentService.ensureDownloadDirectory();
-
-        logger.step('📥', 'Downloading from torrent');
-        
-        const downloadSpinner = ora('Connecting to torrent...').start();
+        const config = new ConfigManager();
+        config.validateRequired();
+        const uploadService = new UploadService(config, logger);
         
         try {
-          const downloadResult = await torrentService.downloadTorrent(file, {
-            selectLargestFile: true,
-            timeout: 600000,
-            onProgress: (progress, fileName) => {
-              downloadSpinner.text = `Downloading ${fileName}: ${progress}%`;
-            }
-          });
-
-          downloadSpinner.succeed(`Download completed: ${downloadResult.fileName}`);
-          
-          filesToProcess = [{
-            originalPath: file,
-            resolvedPath: downloadResult.filePath,
-            fileName: downloadResult.fileName,
-            downloadedFromTorrent: true,
-            torrentHash: downloadResult.torrentHash,
-            fileSize: downloadResult.fileSize
-          }];
-          
-          logger.info(`Downloaded file: ${downloadResult.fileName}`, 1);
-          logger.info(`File size: ${torrentService.formatBytes(downloadResult.fileSize)}`, 1);
-          logger.info(`Torrent hash: ${downloadResult.torrentHash}`, 1);
+          const downloadResult = await uploadService.downloadFromTorrent(file, logger);
+          filesToProcess = [downloadResult.fileInfo];
+          torrentService = downloadResult.torrentService;
           
         } catch (error) {
-          downloadSpinner.fail(`Torrent download failed: ${error.message}`);
           process.exit(1);
         }
       } else {
@@ -302,6 +319,15 @@ uploadCommand
       const maxWaitMinutes = parseInt(options.wait);
       const keepR2File = options.keepR2;
       const animeId = options.animeId;
+      
+      let subtitleTrack = null;
+      if (options.track !== undefined) {
+        subtitleTrack = parseInt(options.track);
+        if (!Validators.isValidSubtitleTrack(subtitleTrack)) {
+          logger.error('Invalid subtitle track number');
+          process.exit(1);
+        }
+      }
 
       if (!Validators.isValidChannelId(channelId)) {
         logger.error('Invalid channel ID');
@@ -318,6 +344,11 @@ uploadCommand
       logger.info(`Privacy: ${privacy}`);
       logger.info(`Keep R2 file: ${keepR2File ? 'Yes' : 'No'}`);
       logger.info(`Max wait time: ${maxWaitMinutes} minutes`);
+      if (subtitleTrack !== null) {
+        logger.info(`Subtitle track: ${subtitleTrack}`);
+      } else {
+        logger.info('Subtitle track: Auto-detect Spanish Latino');
+      }
       if (animeId) {
         logger.info(`Anime ID: ${animeId}`);
       }
@@ -325,6 +356,8 @@ uploadCommand
 
       const results = [];
       const errors = [];
+      
+      const uploadService = new UploadService(config, logger);
 
       for (let i = 0; i < filesToProcess.length; i++) {
         const fileInfo = filesToProcess[i];
@@ -334,248 +367,43 @@ uploadCommand
         logger.header(`Processing File ${currentFile}/${totalFiles}: ${fileInfo.fileName}`);
         
         try {
-          let uploadFileName = options.name;
-          if (options.timestamp) {
-            const ext = path.extname(fileInfo.resolvedPath);
-            const nameWithoutExt = path.basename(options.name || fileInfo.resolvedPath, ext);
-            const timestamp = Date.now();
-            uploadFileName = `${nameWithoutExt}_${timestamp}${ext}`;
-          } else if (!uploadFileName || filesToProcess.length > 1) {
-            uploadFileName = fileInfo.fileName;
+          const uploadOptions = {
+            channelId,
+            privacy,
+            videoPassword,
+            maxWaitMinutes,
+            keepR2File,
+            animeId,
+            subtitleTrack,
+            customName: (options.name && filesToProcess.length === 1) ? options.name : null,
+            timestamp: options.timestamp,
+            useTitle: options.useTitle
+          };
+
+          const result = await uploadService.processFileUpload(fileInfo, uploadOptions);
+          
+          if (fileInfo.downloadedFromTorrent && torrentService) {
+            await uploadService.cleanupTorrentFile(fileInfo, torrentService);
           }
 
-          const fs = require('fs').promises;
-          const stats = await fs.stat(fileInfo.resolvedPath);
-          const fileSize = Validators.formatFileSize(stats.size);
+          results.push(result);
+          logger.success(`✅ File ${currentFile}/${totalFiles} completed successfully`);
 
-          if (fileInfo.downloadedFromTorrent) {
-            logger.info(`Source: Torrent download`);
-          } else {
-            logger.info(`File: ${fileInfo.originalPath}`);
-            logger.info(`Resolved path: ${fileInfo.resolvedPath}`);
-          }
-          logger.info(`Size: ${fileSize}`);
-          logger.info(`Upload name: ${uploadFileName}`);
-          logger.separator();
-
-          let uploadResult = null;
-          let r2FileName = null;
-
-          try {
-            logger.step('📤', 'Uploading to Cloudflare R2');
-            
-            const s3Service = new S3Service(r2Config);
-            const spinner = ora('Uploading to R2...').start();
-            
-            uploadResult = await s3Service.uploadFile(fileInfo.resolvedPath, `videos/${uploadFileName}`, true);
-            r2FileName = uploadResult.Key;
-            
-            spinner.succeed('Upload completed');
-            logger.info(`Public URL: ${uploadResult.publicUrl}`, 1);
-
-            logger.step('📥', 'Importing to PeerTube');
-            
-            const peertubeService = new PeerTubeService(peertubeConfig);
-            
-            const urlParts = uploadResult.publicUrl.split('/');
-            const encodedFileName = encodeURIComponent(urlParts.pop());
-            const baseUrl = urlParts.join('/');
-            const videoUrl = `${baseUrl}/${encodedFileName}`;
-            
-            let videoName = options.name;
-            if (!videoName || filesToProcess.length > 1) {
-              try {
-                const fileName = fileInfo.fileName;
-                const anitomyResult = await anitomy(fileName);
-                
-                if (anitomyResult.anime_title && anitomyResult.episode_number) {
-                  const animeTitle = anitomyResult.anime_title.replace(/\s+/g, '+');
-
-                  const seasonNumber = parseInt(anitomyResult.anime_season) || 1;
-                  const episodeNumber = parseInt(anitomyResult.episode_number);
-                  
-                  const seasonStr = seasonNumber < 10 ? `0${seasonNumber}` : seasonNumber.toString();
-                  const episodeStr = episodeNumber < 10 ? `0${episodeNumber}` : episodeNumber.toString();
-                  
-                  videoName = `${animeTitle}_S${seasonStr}E${episodeStr}`;
-                } else {
-                  videoName = path.parse(fileInfo.resolvedPath).name;
-                }
-              } catch (error) {
-                                 if (isLogs) {
-                   logger.info(`Failed to parse filename with anitomy: ${error.message}`);
-                 }
-                videoName = path.parse(fileInfo.resolvedPath).name;
-              }
-            }
-            
-            const importOptions = {
-              channelId,
-              name: videoName,
-              privacy,
-              videoPasswords: [videoPassword],
-              silent: true
-            };
-
-            const importSpinner = ora('Importing to PeerTube...').start();
-            const importResult = await peertubeService.importVideo(videoUrl, importOptions);
-            const videoId = importResult.video?.id;
-
-            if (!videoId) {
-              throw new Error('No video ID returned from import');
-            }
-
-            importSpinner.succeed('Import initiated');
-            logger.info(`Import ID: ${importResult.id}`, 1);
-            logger.info(`Video ID: ${videoId}`, 1);
-
-            logger.step('⏳', 'Waiting for PeerTube to import from R2');
-            
-            const processingSpinner = ora('Monitoring import status...').start();
-            const processingResult = await peertubeService.waitForProcessing(videoId, maxWaitMinutes);
-            
-            if (processingResult.success) {
-              processingSpinner.succeed(`Import completed, final state: ${processingResult.finalState}`);
-            } else {
-              processingSpinner.warn(`Import timeout: ${processingResult.finalState}`);
-            }
-
-            if (animeId && processingResult.video) {
-              logger.step('📺', 'Updating anime episode');
-              
-              try {
-                const episodeSpinner = ora('Parsing filename and updating episode...').start();
-                
-                const fileName = fileInfo.fileName;
-                logger.info('fileName: ' + fileName);
-                const anitomyResult = await anitomy(fileName);
-
-                logger.info('anitomyResult: ' + JSON.stringify(anitomyResult, null, 2));
-                
-                if (!anitomyResult.episode_number) {
-                  episodeSpinner.warn('Could not extract episode number from filename');
-                  logger.warning('Skipping episode update - no episode number found');
-                } else {
-                  const episodeNumber = parseInt(anitomyResult.episode_number);
-                  const video = processingResult.video;
-                  
-                  const anitorrentService = new AniTorrentService();
-                  
-                  let animeTitle = anitomyResult.anime_title || video.name;
-                  
-                  try {
-                    const animeData = await anitorrentService.getAnimeById(animeId);
-                    animeTitle = animeData.title?.english || animeData.title?.romaji || animeTitle;
-                  } catch (error) {
-                                         if (isLogs) {
-                       logger.info(`Could not fetch anime data, using parsed title: ${error.message}`);
-                     }
-                  }
-                  
-                  const thumbnailUrl = video.thumbnailPath 
-                    ? `https://peertube.anitorrent.com${video.thumbnailPath}`
-                    : null;
-                  
-                  if (!thumbnailUrl) {
-                    throw new Error('No thumbnail available for episode');
-                  }
-                  
-                  const episodeData = {
-                    peertubeId: video.id.toString(),
-                    uuid: video.uuid,
-                    shortUUID: video.shortUUID,
-                    password: videoPassword || null,
-                    title: {
-                      es: null,
-                      en: null,
-                      ja: null
-                    },
-                    embedUrl: `${peertubeConfig.apiUrl.replace('/api/v1', '')}/videos/embed/${video.shortUUID}`,
-                    thumbnailUrl: thumbnailUrl,
-                    description: video.description || null,
-                    duration: video.duration || null
-                  };
-                  
-                  await anitorrentService.updateCustomEpisode(animeId, episodeNumber, episodeData);
-                  
-                  episodeSpinner.succeed(`Episode ${episodeNumber} updated successfully`);
-                  logger.info(`Episode: ${episodeNumber}`, 1);
-                  logger.info(`Anime: ${animeTitle}`, 1);
-                }
-                
-              } catch (error) {
-                logger.error(`Failed to update episode: ${error.message}`);
-                logger.warning('Video upload completed but episode update failed');
-              }
-            }
-
-            if (!keepR2File) {
-              logger.step('🗑️', 'Cleaning up R2 file');
-              
-              const cleanupSpinner = ora('Deleting R2 file...').start();
-              await s3Service.deleteFile(r2FileName, true);
-              cleanupSpinner.succeed('R2 file deleted');
-            }
-
-            if (fileInfo.downloadedFromTorrent && torrentService) {
-              logger.step('🗑️', 'Cleaning up torrent file');
-              
-              const torrentCleanupSpinner = ora('Deleting downloaded torrent file...').start();
-              await torrentService.cleanupFile(fileInfo.resolvedPath);
-              torrentService.destroy();
-              torrentCleanupSpinner.succeed('Torrent file deleted');
-            }
-
-            const result = {
-              fileName: fileInfo.fileName,
-              success: true,
-              video: processingResult.video,
-              finalState: processingResult.finalState,
-              videoUrl: videoUrl,
-              keepR2File: keepR2File
-            };
-
-            results.push(result);
-            logger.success(`✅ File ${currentFile}/${totalFiles} completed successfully`);
-
-          } catch (error) {
-            logger.error(`❌ File ${currentFile}/${totalFiles} failed: ${error.message}`);
-            
-            errors.push({
-              fileName: fileInfo.fileName,
-              error: error.message
-            });
-
-            if (r2FileName && !keepR2File) {
-              logger.info('Attempting cleanup of R2 file...');
-              try {
-                const s3Service = new S3Service(r2Config);
-                await s3Service.deleteFile(r2FileName, true);
-                logger.success('R2 file cleaned up successfully');
-              } catch (cleanupError) {
-                logger.error(`Failed to cleanup R2 file: ${cleanupError.message}`);
-                logger.error(`Manual cleanup required for: ${r2FileName}`);
-              }
-            }
-
-            if (fileInfo.downloadedFromTorrent && torrentService) {
-              logger.info('Attempting cleanup of torrent file...');
-              try {
-                await torrentService.cleanupFile(fileInfo.resolvedPath);
-                torrentService.destroy();
-                logger.success('Torrent file cleaned up successfully');
-              } catch (cleanupError) {
-                logger.error(`Failed to cleanup torrent file: ${cleanupError.message}`);
-              }
-            }
-          }
-
-        } catch (fileError) {
-          logger.error(`❌ File ${currentFile}/${totalFiles} failed: ${fileError.message}`);
+        } catch (error) {
+          logger.error(`❌ File ${currentFile}/${totalFiles} failed: ${error.message}`);
+          
           errors.push({
             fileName: fileInfo.fileName,
-            error: fileError.message
+            error: error.message
           });
+
+          if (fileInfo.downloadedFromTorrent && torrentService) {
+            try {
+              await uploadService.cleanupTorrentFile(fileInfo, torrentService);
+            } catch (cleanupError) {
+              logger.error(`Failed to cleanup torrent file: ${cleanupError.message}`);
+            }
+          }
         }
 
         logger.separator();
@@ -635,6 +463,175 @@ uploadCommand
         }
       }
       
+      process.exit(1);
+    }
+  });
+
+uploadCommand
+  .command('subtitles')
+  .description('Upload all subtitle files (.ass) from current directory to R2')
+  .option('--sub-folders', 'search for subtitle files in subfolders as well')
+  .option('--timestamp', 'add timestamp to filenames')
+  .action(async (options) => {
+    const isLogs = uploadCommand.parent?.opts()?.logs || false;
+    const logger = new Logger({ 
+      verbose: false,
+      quiet: uploadCommand.parent?.opts()?.quiet || false
+    });
+
+    try {
+      const currentDir = process.cwd();
+      const searchSubfolders = options.subFolders;
+      
+      logger.header(`Scanning ${searchSubfolders ? 'Directory Tree' : 'Current Directory'} for Subtitle Files`);
+      logger.info(`Directory: ${currentDir}`);
+      if (searchSubfolders) {
+        logger.info('Including subfolders: Yes');
+      }
+      logger.separator();
+
+      const scanSpinner = ora('Scanning for subtitle files...').start();
+      const filesToProcess = await scanDirectoryForSubtitles(currentDir, searchSubfolders, logger);
+      scanSpinner.succeed('Scan completed');
+
+      if (filesToProcess.length === 0) {
+        logger.error(`No subtitle files found in the ${searchSubfolders ? 'directory tree' : 'current directory'}`);
+        process.exit(1);
+      }
+
+      logger.success(`Found ${filesToProcess.length} subtitle file(s):`);
+      
+      const groupedFiles = {};
+      filesToProcess.forEach((fileInfo) => {
+        if (!groupedFiles[fileInfo.directory]) {
+          groupedFiles[fileInfo.directory] = [];
+        }
+        groupedFiles[fileInfo.directory].push(fileInfo);
+      });
+
+      Object.keys(groupedFiles).sort().forEach((dir) => {
+        logger.info(`📁 ${dir}:`, 1);
+        groupedFiles[dir].forEach((fileInfo, index) => {
+          const fileSize = Validators.formatFileSize(fileInfo.size);
+          logger.info(`  ${index + 1}. ${fileInfo.fileName} (${fileSize})`, 2);
+        });
+      });
+      
+      logger.separator();
+      
+      const totalSize = filesToProcess.reduce((sum, file) => sum + file.size, 0);
+      logger.info(`Total files: ${filesToProcess.length}`);
+      logger.info(`Total size: ${Validators.formatFileSize(totalSize)}`);
+      logger.separator();
+
+      const { proceed } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'proceed',
+          message: 'Do you want to proceed with uploading these subtitle files?',
+          default: false
+        }
+      ]);
+
+      if (!proceed) {
+        logger.info('Upload cancelled by user');
+        process.exit(0);
+      }
+
+      logger.separator();
+
+      const config = new ConfigManager();
+      config.validateRequired();
+      const r2Config = config.getR2Config();
+      const s3Service = new S3Service(r2Config);
+
+      const results = [];
+      const errors = [];
+
+      for (let i = 0; i < filesToProcess.length; i++) {
+        const fileInfo = filesToProcess[i];
+        const currentFile = i + 1;
+        const totalFiles = filesToProcess.length;
+
+        logger.header(`Uploading File ${currentFile}/${totalFiles}: ${fileInfo.fileName}`);
+        
+        try {
+          let uploadFileName = fileInfo.fileName;
+          
+          if (options.timestamp) {
+            const ext = path.extname(fileInfo.resolvedPath);
+            const nameWithoutExt = path.basename(fileInfo.resolvedPath, ext);
+            const timestamp = Date.now();
+            uploadFileName = `${nameWithoutExt}_${timestamp}${ext}`;
+          }
+
+          const fileSize = Validators.formatFileSize(fileInfo.size);
+          logger.info(`File: ${fileInfo.originalPath}`);
+          logger.info(`Size: ${fileSize}`);
+          logger.info(`Upload name: ${uploadFileName}`);
+          logger.separator();
+
+          const spinner = ora('Uploading to R2...').start();
+          
+          const result = await s3Service.uploadFile(fileInfo.resolvedPath, `subtitles/${uploadFileName}`, true);
+          
+          spinner.succeed('Upload completed');
+          logger.info(`Public URL: ${result.publicUrl}`, 1);
+          logger.info(`ETag: ${result.ETag}`, 1);
+
+          results.push({
+            fileName: fileInfo.fileName,
+            uploadName: uploadFileName,
+            success: true,
+            publicUrl: result.publicUrl,
+            size: fileInfo.size
+          });
+
+          logger.success(`✅ File ${currentFile}/${totalFiles} uploaded successfully`);
+
+        } catch (error) {
+          logger.error(`❌ File ${currentFile}/${totalFiles} failed: ${error.message}`);
+          
+          errors.push({
+            fileName: fileInfo.fileName,
+            error: error.message
+          });
+        }
+
+        logger.separator();
+      }
+
+      logger.header('Subtitle Upload Summary');
+      logger.info(`Total files processed: ${filesToProcess.length}`);
+      logger.info(`Successful uploads: ${results.length}`);
+      logger.info(`Failed uploads: ${errors.length}`);
+      logger.separator();
+
+      if (results.length > 0) {
+        logger.success('Successfully uploaded files:');
+        results.forEach((result, index) => {
+          logger.info(`${index + 1}. ${result.fileName}`, 1);
+          logger.info(`   Upload name: ${result.uploadName}`, 2);
+          logger.info(`   Public URL: ${result.publicUrl}`, 2);
+          logger.info(`   Size: ${Validators.formatFileSize(result.size)}`, 2);
+        });
+        logger.separator();
+      }
+
+      if (errors.length > 0) {
+        logger.error('Failed files:');
+        errors.forEach((error, index) => {
+          logger.info(`${index + 1}. ${error.fileName}: ${error.error}`, 1);
+        });
+        logger.separator();
+        
+        if (results.length === 0) {
+          process.exit(1);
+        }
+      }
+
+    } catch (error) {
+      logger.error(`Subtitle upload failed: ${error.message}`);
       process.exit(1);
     }
   });

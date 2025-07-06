@@ -186,11 +186,12 @@ filesCommand
 filesCommand
   .command('parse')
   .description('Parse anime file names and extract metadata using anitomy')
-  .argument('[file]', 'specific file to parse (if not provided, scans current directory)')
+  .argument('[input]', 'file path or text to parse (if not provided, scans current directory)')
   .option('--path <directory>', 'target directory path (default: current directory)')
   .option('--recursive', 'search for files in subdirectories')
   .option('--json', 'output results in JSON format')
-  .action(async (file, options) => {
+  .option('--text', 'treat input as text instead of file path')
+  .action(async (input, options) => {
     const isLogs = filesCommand.parent?.opts()?.logs || false;
     const logger = new Logger({
       verbose: false,
@@ -200,8 +201,94 @@ filesCommand
     try {
       let filesToParse = [];
 
-      if (file) {
-        const fileValidation = await Validators.validateFilePath(file);
+      if (input && options.text) {
+        logger.header('AniTorrent CLI - Anime Text Parser');
+        logger.info(`Parsing text: "${input}"`);
+        logger.separator();
+
+        logger.step('🔍', 'Parsing text with anitomy');
+        const parseSpinner = ora('Analyzing anime metadata...').start();
+
+        try {
+          const parsed = await anitomy(input);
+          parseSpinner.succeed('Text parsing completed');
+
+          if (options.json) {
+            const jsonOutput = {
+              input: input,
+              success: true,
+              metadata: parsed
+            };
+            console.log(JSON.stringify(jsonOutput, null, 2));
+            return;
+          }
+
+          logger.step('📊', 'Parse Results');
+          logger.separator();
+
+          logger.info(`📄 Input: ${chalk.cyan(input)}`);
+          
+          if (parsed.anime_title) {
+            logger.info(`   📺 Title: ${chalk.green(parsed.anime_title)}`, 1);
+          }
+          
+          if (parsed.anime_season) {
+            logger.info(`   🎬 Season: ${chalk.yellow(parsed.anime_season)}`, 1);
+          }
+          
+          if (parsed.episode_number) {
+            logger.info(`   📊 Episode: ${chalk.blue(parsed.episode_number)}`, 1);
+          }
+          
+          if (parsed.anime_year) {
+            logger.info(`   📅 Year: ${chalk.magenta(parsed.anime_year)}`, 1);
+          }
+          
+          if (parsed.video_resolution) {
+            logger.info(`   🎥 Resolution: ${chalk.white(parsed.video_resolution)}`, 1);
+          }
+          
+          if (parsed.source) {
+            logger.info(`   💿 Source: ${chalk.gray(parsed.source)}`, 1);
+          }
+          
+          if (parsed.audio_language) {
+            logger.info(`   🎵 Audio: ${chalk.cyan(parsed.audio_language)}`, 1);
+          }
+          
+          if (parsed.subtitle_language) {
+            logger.info(`   📝 Subtitles: ${chalk.white(parsed.subtitle_language)}`, 1);
+          }
+          
+          if (parsed.release_group) {
+            logger.info(`   👥 Group: ${chalk.red(parsed.release_group)}`, 1);
+          }
+          
+          if (parsed.file_extension) {
+            logger.info(`   📎 Extension: ${chalk.gray(parsed.file_extension)}`, 1);
+          }
+
+          return;
+        } catch (error) {
+          parseSpinner.fail(`Failed to parse text: ${error.message}`);
+          
+          if (options.json) {
+            const jsonOutput = {
+              input: input,
+              success: false,
+              error: error.message
+            };
+            console.log(JSON.stringify(jsonOutput, null, 2));
+            return;
+          }
+
+          logger.error(`Parse failed: ${error.message}`);
+          process.exit(1);
+        }
+      }
+
+      if (input && !options.text) {
+        const fileValidation = await Validators.validateFilePath(input);
         
         if (!fileValidation.exists) {
           logger.error(`File not found: "${fileValidation.originalPath}"`);
@@ -213,7 +300,7 @@ filesCommand
           fullPath: fileValidation.resolvedPath,
           relativePath: fileValidation.originalPath
         }];
-      } else {
+      } else if (!input) {
         const targetPath = options.path || process.cwd();
         const isRecursive = options.recursive || false;
 
@@ -271,7 +358,6 @@ filesCommand
       for (const fileInfo of filesToParse) {
         try {
           const parsed = await anitomy(fileInfo.fileName);
-          logger.info(JSON.stringify(parsed, null, 2));
           results.push({
             file: fileInfo,
             parsed,

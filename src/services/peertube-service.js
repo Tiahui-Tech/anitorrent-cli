@@ -217,7 +217,7 @@ class PeerTubeService {
         const accessToken = await this.getValidAccessToken();
         
         try {
-            const response = await fetch(`${this.apiUrl}/videos?count=${limit}&start=${start}`, {
+            const response = await fetch(`${this.apiUrl}/videos?count=${limit}&start=${start}&sort=-publishedAt&include=1`, {
                 headers: {
                     'Authorization': `Bearer ${accessToken}`
                 }

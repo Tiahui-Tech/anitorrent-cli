@@ -58,6 +58,12 @@ class Validators {
         return videoExtensions.includes(ext);
     }
 
+    static isValidSubtitleFile(filename) {
+        const subtitleExtensions = ['.ass', '.srt', '.vtt', '.sub'];
+        const ext = filename.toLowerCase().substring(filename.lastIndexOf('.'));
+        return subtitleExtensions.includes(ext);
+    }
+
     static isValidChannelId(channelId) {
         const id = parseInt(channelId);
         return !isNaN(id) && id > 0;

@@ -111,7 +111,7 @@ class AniTorrentService {
 
         try {
             const response = await this.makeRequest(
-                `${this.apiUrl}/peertube/episodes`,
+                `${this.apiUrl}/content/episodes`,
                 {
                     method: 'POST',
                     headers: this.getAuthHeaders({
@@ -128,6 +128,38 @@ class AniTorrentService {
             return response.data;
         } catch (error) {
             throw new Error(`Error updating custom episode: ${error.message}`);
+        }
+    }
+
+    async getAnimeEpisodes(anilistId) {
+        try {
+            const response = await this.makeRequest(`${this.apiUrl}/content/episodes/${anilistId}`, {
+                headers: this.getAuthHeaders()
+            });
+            
+            if (response.status < 200 || response.status >= 300) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            return response.data || [];
+        } catch (error) {
+            throw new Error(`Error fetching anime episodes: ${error.message}`);
+        }
+    }
+
+    async getEpisodeByNumber(anilistId, episodeNumber) {
+        try {
+            const response = await this.makeRequest(`${this.apiUrl}/content/episodes/${anilistId}/${episodeNumber}`, {
+                headers: this.getAuthHeaders()
+            });
+            
+            if (response.status < 200 || response.status >= 300) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            return response.data || null;
+        } catch (error) {
+            throw new Error(`Error fetching episode: ${error.message}`);
         }
     }
 

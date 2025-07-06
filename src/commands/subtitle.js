@@ -121,6 +121,7 @@ subtitlesCommand
   .description('Extract subtitles from videos or playlists')
   .argument('[input]', 'video file path or PeerTube playlist ID (auto-detected)')
   .option('--folder <path>', 'folder path to search for videos (default: current directory)')
+  .option('--sub-folders', 'search for video files in subfolders as well')
   .option('--track <number>', 'subtitle track number (if not specified, auto-finds Spanish Latino)')
   .option('--all', 'extract all subtitle tracks')
   .option('--translate', 'also create AI-translated version to Spanish')
@@ -431,8 +432,11 @@ subtitlesCommand
       } else if (inputType.type === 'folder') {
         const targetDir = inputType.value || folderPath;
         
-        logger.header('Folder-based Subtitle Extraction');
+        logger.header(`${options.subFolders ? 'Directory Tree' : 'Folder-based'} Subtitle Extraction`);
         logger.info(`Directory: ${targetDir === '.' ? 'Current directory' : targetDir}`);
+        if (options.subFolders) {
+          logger.info('Including subfolders: Yes');
+        }
         
         if (options.all) {
           logger.info('Mode: Extract all subtitle tracks');
@@ -450,7 +454,7 @@ subtitlesCommand
         logger.separator();
 
         const spinner = ora('Finding local video files...').start();
-        const localFiles = await subtitleService.getLocalVideoFiles(targetDir);
+        const localFiles = await subtitleService.getLocalVideoFiles(targetDir, options.subFolders);
         spinner.succeed(`Found ${localFiles.length} local video files`);
 
         if (localFiles.length === 0) {
@@ -470,9 +474,9 @@ subtitlesCommand
                 spinner.text = 'Extracting subtitles...';
               }
             };
-            results = await subtitleService.extractAllSubtitlesFromFolder(targetDir);
+            results = await subtitleService.extractAllSubtitlesFromFolder(targetDir, options.subFolders);
           } else {
-            results = await subtitleService.extractAllSubtitlesFromFolder(targetDir);
+            results = await subtitleService.extractAllSubtitlesFromFolder(targetDir, options.subFolders);
           }
         } else {
           if (translationConfig) {
@@ -487,10 +491,11 @@ subtitlesCommand
               subtitleTrack, 
               targetDir, 
               translationConfig,
-              onProgress
+              onProgress,
+              options.subFolders
             );
           } else {
-            results = await subtitleService.extractAllLocalSubtitles(subtitleTrack, targetDir);
+            results = await subtitleService.extractAllLocalSubtitles(subtitleTrack, targetDir, options.subFolders);
           }
         }
         
@@ -593,7 +598,8 @@ subtitlesCommand
             subtitleTrack, 
             peertubeConfig.apiUrl,
             folderPath,
-            options.offset || 0
+            options.offset || 0,
+            options.subFolders
           );
           spinner.succeed(`Found ${matches.length} matches`);
 
@@ -639,8 +645,11 @@ subtitlesCommand
 
       } else {
         if (!input) {
-          logger.header('Current Directory Subtitle Extraction');
+          logger.header(`${options.subFolders ? 'Directory Tree' : 'Current Directory'} Subtitle Extraction`);
           logger.info(`Directory: ${folderPath === '.' ? 'Current directory' : folderPath}`);
+          if (options.subFolders) {
+            logger.info('Including subfolders: Yes');
+          }
           
           if (options.all) {
             logger.info('Mode: Extract all subtitle tracks');
@@ -658,7 +667,7 @@ subtitlesCommand
           logger.separator();
 
           const spinner = ora('Finding local video files...').start();
-          const localFiles = await subtitleService.getLocalVideoFiles(folderPath);
+          const localFiles = await subtitleService.getLocalVideoFiles(folderPath, options.subFolders);
           spinner.succeed(`Found ${localFiles.length} local video files`);
 
           if (localFiles.length === 0) {
@@ -678,9 +687,9 @@ subtitlesCommand
                   spinner.text = 'Extracting subtitles...';
                 }
               };
-              results = await subtitleService.extractAllSubtitlesFromFolder(folderPath);
+              results = await subtitleService.extractAllSubtitlesFromFolder(folderPath, options.subFolders);
             } else {
-              results = await subtitleService.extractAllSubtitlesFromFolder(folderPath);
+              results = await subtitleService.extractAllSubtitlesFromFolder(folderPath, options.subFolders);
             }
           } else {
             if (translationConfig) {
@@ -695,10 +704,11 @@ subtitlesCommand
                 subtitleTrack, 
                 folderPath, 
                 translationConfig,
-                onProgress
+                onProgress,
+                options.subFolders
               );
             } else {
-              results = await subtitleService.extractAllLocalSubtitles(subtitleTrack, folderPath);
+              results = await subtitleService.extractAllLocalSubtitles(subtitleTrack, folderPath, options.subFolders);
             }
           }
           
@@ -1063,6 +1073,8 @@ subtitlesCommand
   .option('--replace <from,to>', 'replace text in filenames (format: "old,new")')
   .option('--playlist', 'treat pattern as PeerTube playlist ID and rename using shortUUID')
   .option('--folder <path>', 'folder path to search for videos when using playlist mode (default: current directory)')
+  .option('--sub-folders', 'search for subtitle files in subfolders as well')
+  .option('--auto-translate', 'automatically translate selected Latino subtitles')
   .option('--dry-run', 'show what would be renamed without actually renaming')
   .option('--logs', 'detailed output')
   .option('--quiet, -q', 'quiet mode')
@@ -1072,6 +1084,88 @@ subtitlesCommand
       verbose: false,
       quiet: options.quiet || false
     });
+
+    const scanSubtitlesRecursively = async (dir, includeTranslated = false) => {
+      const foundFiles = [];
+
+      async function scanDir(currentDir, relativePath = '') {
+        try {
+          const entries = await fs.readdir(currentDir, { withFileTypes: true });
+          const subtitleFiles = [];
+          
+          for (const entry of entries) {
+            const fullPath = path.join(currentDir, entry.name);
+            const relativeFilePath = path.join(relativePath, entry.name);
+            
+            if (entry.isFile()) {
+              const ext = path.extname(entry.name).toLowerCase();
+              if (['.ass', '.srt', '.vtt', '.sub'].includes(ext)) {
+                if (includeTranslated || !entry.name.toLowerCase().includes('_translated')) {
+                  subtitleFiles.push({
+                    filename: entry.name,
+                    fullPath: fullPath,
+                    relativePath: relativeFilePath,
+                    directory: relativePath || '.'
+                  });
+                }
+              }
+            } else if (entry.isDirectory() && options.subFolders) {
+              await scanDir(fullPath, relativeFilePath);
+            }
+          }
+
+          if (subtitleFiles.length > 0) {
+            const selectedFile = selectBestLatinSubtitle(subtitleFiles);
+            if (selectedFile) {
+              foundFiles.push(selectedFile);
+            }
+          }
+        } catch (error) {
+          // Skip directories that can't be read
+        }
+      }
+
+      await scanDir(dir);
+      return foundFiles;
+    };
+
+    const selectBestLatinSubtitle = (subtitleFiles) => {
+      if (subtitleFiles.length === 0) return null;
+      
+      if (subtitleFiles.length === 1) {
+        return subtitleFiles[0];
+      }
+
+      const es419Files = subtitleFiles.filter(file => 
+        file.filename.toLowerCase().includes('_es-419') || 
+        file.filename.toLowerCase().includes('_es_419')
+      );
+      
+      if (es419Files.length > 0) {
+        return es419Files[0];
+      }
+
+      const esFiles = subtitleFiles.filter(file => 
+        file.filename.toLowerCase().includes('_es') && 
+        !file.filename.toLowerCase().includes('_es-') &&
+        !file.filename.toLowerCase().includes('_es_')
+      );
+      
+      if (esFiles.length > 0) {
+        return esFiles[0];
+      }
+
+      const latinFiles = subtitleFiles.filter(file => 
+        file.filename.toLowerCase().includes('_lat') ||
+        file.filename.toLowerCase().includes('_latino')
+      );
+      
+      if (latinFiles.length > 0) {
+        return latinFiles[0];
+      }
+
+      return subtitleFiles[0];
+    };
 
     try {
       const fs = require('fs').promises;
@@ -1407,8 +1501,11 @@ subtitlesCommand
           }
         }
 
-        logger.header('Subtitle File Renaming');
+        logger.header(`${options.subFolders ? 'Directory Tree' : 'Subtitle File'} Renaming`);
         logger.info(`Directory: ${targetDir}`);
+        if (options.subFolders) {
+          logger.info('Including subfolders: Yes (one subtitle per folder)');
+        }
         if (customPattern) {
           logger.info(`Pattern: ${customPattern}`);
         }
@@ -1419,6 +1516,9 @@ subtitlesCommand
         }
         if (options.anitomy) {
           logger.info('Parsing: Anitomy anime-style naming');
+        }
+        if (options.autoTranslate) {
+          logger.info('Auto-translate: Enabled for selected Latino subtitles');
         }
         if (options.prefix) {
           logger.info(`Prefix: "${options.prefix}"`);
@@ -1436,31 +1536,57 @@ subtitlesCommand
 
         const spinner = ora('Finding subtitle files...').start();
         
-        const files = await fs.readdir(targetDir);
-        const allSubtitleFiles = files.filter(file => {
-          const ext = path.extname(file).toLowerCase();
-          return ['.ass', '.srt', '.vtt', '.sub'].includes(ext);
-        });
-
-        let subtitleFiles = allSubtitleFiles;
+        let subtitleFiles;
         
-        if (!options.includeTranslated) {
-          subtitleFiles = allSubtitleFiles.filter(file => {
-            return !file.toLowerCase().includes('_translated');
+        if (options.subFolders) {
+          subtitleFiles = await scanSubtitlesRecursively(targetDir, options.includeTranslated);
+        } else {
+          const files = await fs.readdir(targetDir);
+          const allSubtitleFiles = files.filter(file => {
+            const ext = path.extname(file).toLowerCase();
+            return ['.ass', '.srt', '.vtt', '.sub'].includes(ext);
           });
+
+          if (options.includeTranslated) {
+            subtitleFiles = allSubtitleFiles.map(file => ({
+              filename: file,
+              fullPath: path.join(targetDir, file),
+              relativePath: file,
+              directory: '.'
+            }));
+          } else {
+            subtitleFiles = allSubtitleFiles
+              .filter(file => !file.toLowerCase().includes('_translated'))
+              .map(file => ({
+                filename: file,
+                fullPath: path.join(targetDir, file),
+                relativePath: file,
+                directory: '.'
+              }));
+          }
         }
 
-        spinner.succeed(`Found ${subtitleFiles.length} subtitle files${!options.includeTranslated ? ` (${allSubtitleFiles.length - subtitleFiles.length} translated files excluded)` : ''}`);
+        spinner.succeed(`Found ${subtitleFiles.length} subtitle files${options.subFolders ? ' (one per folder)' : ''}`);
 
         if (subtitleFiles.length === 0) {
           logger.warning('No subtitle files found to rename');
           return;
         }
 
-        const renameOperations = [];
+        if (options.subFolders && isLogs) {
+          logger.info('Selected subtitle files:');
+          subtitleFiles.forEach((fileInfo, index) => {
+            logger.info(`${index + 1}. ${fileInfo.relativePath} (from ${fileInfo.directory})`, 1);
+          });
+          logger.separator();
+        }
 
-        for (const file of subtitleFiles) {
-          const fullPath = path.join(targetDir, file);
+        const renameOperations = [];
+        const translationTasks = [];
+
+        for (const fileInfo of subtitleFiles) {
+          const file = fileInfo.filename;
+          const fullPath = fileInfo.fullPath;
           const ext = path.extname(file);
           const baseName = path.basename(file, ext);
           
@@ -1511,31 +1637,73 @@ subtitlesCommand
           }
 
           const newFileName = newBaseName + ext;
-          const newFullPath = path.join(targetDir, newFileName);
+          const newFullPath = options.subFolders ? 
+            path.join(path.dirname(fullPath), newFileName) : 
+            path.join(targetDir, newFileName);
 
           if (file !== newFileName) {
             renameOperations.push({
               oldPath: fullPath,
               newPath: newFullPath,
               oldName: file,
-              newName: newFileName
+              newName: newFileName,
+              directory: fileInfo.directory,
+              fileInfo: fileInfo
             });
+          }
+
+          if (options.autoTranslate && ext.toLowerCase() === '.ass' && !file.toLowerCase().includes('_translated')) {
+            const isLatinSubtitle = file.toLowerCase().includes('_es-419') || 
+                                  file.toLowerCase().includes('_es_419') || 
+                                  file.toLowerCase().includes('_es') || 
+                                  file.toLowerCase().includes('_lat');
+            
+            if (isLatinSubtitle) {
+              const translatedName = newBaseName + '_translated' + ext;
+              const translatedPath = options.subFolders ? 
+                path.join(path.dirname(fullPath), translatedName) : 
+                path.join(targetDir, translatedName);
+
+              translationTasks.push({
+                sourceFile: newFullPath,
+                targetFile: translatedPath,
+                sourceName: newFileName,
+                targetName: translatedName,
+                directory: fileInfo.directory
+              });
+            }
           }
         }
 
-        if (renameOperations.length === 0) {
-          logger.info('No files need to be renamed');
+        if (renameOperations.length === 0 && translationTasks.length === 0) {
+          logger.info('No files need to be renamed or translated');
           return;
         }
 
-        logger.info(`Files to rename (${renameOperations.length}):`);
-        renameOperations.forEach((op, index) => {
-          logger.info(`${index + 1}. ${op.oldName} → ${op.newName}`, 1);
-        });
+        if (renameOperations.length > 0) {
+          logger.info(`Files to rename (${renameOperations.length}):`);
+          renameOperations.forEach((op, index) => {
+            logger.info(`${index + 1}. ${op.oldName} → ${op.newName}`, 1);
+            if (options.subFolders && op.directory !== '.') {
+              logger.info(`     Directory: ${op.directory}`, 2);
+            }
+          });
+        }
+
+        if (translationTasks.length > 0) {
+          logger.separator();
+          logger.info(`Files to translate (${translationTasks.length}):`);
+          translationTasks.forEach((task, index) => {
+            logger.info(`${index + 1}. ${task.sourceName} → ${task.targetName}`, 1);
+            if (options.subFolders && task.directory !== '.') {
+              logger.info(`     Directory: ${task.directory}`, 2);
+            }
+          });
+        }
 
         if (options.dryRun) {
           logger.separator();
-          logger.info('Dry run completed - no files were actually renamed');
+          logger.info('Dry run completed - no files were actually renamed or translated');
           return;
         }
 
@@ -1585,6 +1753,117 @@ subtitlesCommand
         if (successful > 0) {
           logger.separator();
           logger.success(`Successfully renamed ${successful} subtitle files`);
+        }
+
+        if (translationTasks.length > 0 && !options.dryRun) {
+          logger.separator();
+          logger.step('🌐', 'Auto-translating Latino subtitles');
+          
+          const config = new ConfigManager();
+          const translationConfig = config.getTranslationConfig();
+
+          if (!translationConfig.apiKey) {
+            logger.warning('Claude API key not configured. Skipping auto-translation.');
+            logger.info('Run "anitorrent config setup" to set up translation configuration');
+          } else {
+            const TranslationService = require('../services/translation-service');
+            const translationService = new TranslationService(translationConfig);
+            
+            let translationSuccessful = 0;
+            let translationFailed = 0;
+            const translationErrors = [];
+
+            for (let i = 0; i < translationTasks.length; i++) {
+              const task = translationTasks[i];
+              const currentTask = i + 1;
+              const totalTasks = translationTasks.length;
+
+              logger.info(`Translating ${currentTask}/${totalTasks}: ${task.sourceName}`);
+              
+              try {
+                const sourceExists = await fs.access(task.sourceFile).then(() => true).catch(() => false);
+                
+                if (!sourceExists) {
+                  translationErrors.push(`${task.sourceName}: Source file not found after rename`);
+                  translationFailed++;
+                  continue;
+                }
+
+                const targetExists = await fs.access(task.targetFile).then(() => true).catch(() => false);
+                
+                if (targetExists) {
+                  translationErrors.push(`${task.sourceName}: Translation file already exists`);
+                  translationFailed++;
+                  continue;
+                }
+
+                let currentGroup = 0;
+                let totalGroups = 0;
+                let translationSpinner = ora('Initializing translation...').start();
+
+                const onProgress = (progress) => {
+                  switch (progress.type) {
+                    case 'start':
+                      totalGroups = progress.totalGroups;
+                      translationSpinner.succeed(`Found ${progress.totalDialogs} dialog lines in ${totalGroups} groups`);
+                      translationSpinner = ora(`Translating group 1/${totalGroups}...`).start();
+                      break;
+                    case 'progress':
+                      currentGroup = progress.currentGroup;
+                      translationSpinner.text = `Translating group ${currentGroup}/${totalGroups}...`;
+                      break;
+                    case 'error':
+                      if (!logger.quiet) {
+                        logger.warning(`Translation warning: ${progress.message}`);
+                      }
+                      break;
+                    case 'complete':
+                      translationSpinner.succeed(`Translation completed: ${progress.translatedCount} lines translated`);
+                      break;
+                  }
+                };
+
+                const translationOptions = {
+                  outputPath: task.targetFile,
+                  onProgress
+                };
+
+                const result = await translationService.translateSubtitles(task.sourceFile, translationOptions);
+
+                if (result.success) {
+                  translationSuccessful++;
+                  logger.success(`✓ ${task.sourceName} → ${task.targetName}`);
+                } else {
+                  translationFailed++;
+                  translationErrors.push(`${task.sourceName}: Translation failed`);
+                  logger.error(`✗ ${task.sourceName}: Translation failed`);
+                }
+              } catch (error) {
+                translationFailed++;
+                translationErrors.push(`${task.sourceName}: ${error.message}`);
+                logger.error(`✗ ${task.sourceName}: ${error.message}`);
+              }
+              
+              if (i < translationTasks.length - 1) {
+                logger.separator();
+              }
+            }
+
+            logger.separator();
+            if (translationSuccessful > 0) {
+              logger.success(`Auto-translation completed: ${translationSuccessful} successful, ${translationFailed} failed`);
+            } else {
+              logger.error(`Auto-translation failed: ${translationFailed} errors`);
+            }
+
+            if (translationErrors.length > 0 && (isLogs || translationFailed === translationTasks.length)) {
+              logger.separator();
+              logger.info('Translation errors:');
+              translationErrors.forEach(error => {
+                logger.error(`✗ ${error}`, 1);
+              });
+            }
+          }
         }
       }
 
