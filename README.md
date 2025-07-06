@@ -20,6 +20,41 @@ A powerful command-line tool for video management with PeerTube and Cloudflare R
 
 ## 📦 Installation
 
+### Prerequisites
+
+**Ubuntu/Debian:**
+```bash
+sudo apt update
+sudo apt install nodejs npm ffmpeg mkvtoolnix
+```
+
+**Other Linux distributions:**
+```bash
+# Fedora
+sudo dnf install nodejs npm ffmpeg mkvtoolnix
+
+# CentOS/RHEL
+sudo yum install epel-release
+sudo yum install nodejs npm ffmpeg mkvtoolnix
+
+# Arch Linux
+sudo pacman -S nodejs npm ffmpeg mkvtoolnix-cli
+```
+
+**macOS:**
+```bash
+# Install Homebrew if not installed: https://brew.sh/
+brew install node ffmpeg mkvtoolnix
+```
+
+**Windows:**
+- Install Node.js from https://nodejs.org/
+- Install FFmpeg from https://ffmpeg.org/download.html
+- Install MKVToolNix from https://mkvtoolnix.download/
+- Add both to your system PATH
+
+### Install AniTorrent CLI
+
 ### From NPM (Recommended)
 ```bash
 npm install -g @tiahui/anitorrent-cli@latest
@@ -37,6 +72,33 @@ npm link
 ```bash
 anitorrent --version
 anitorrent --help
+```
+
+### Ubuntu-Specific Notes
+
+On Ubuntu, you may need to install additional packages for optimal performance:
+
+```bash
+# For better video codec support
+sudo apt install ubuntu-restricted-extras
+
+# For development tools (if installing from source)
+sudo apt install build-essential
+
+# Make sure the binary is executable
+chmod +x /usr/local/bin/anitorrent
+```
+
+If you encounter permission issues, you can also install without sudo:
+```bash
+# Configure npm to use a different directory
+mkdir ~/.npm-global
+npm config set prefix '~/.npm-global'
+echo 'export PATH=~/.npm-global/bin:$PATH' >> ~/.bashrc
+source ~/.bashrc
+
+# Then install the CLI
+npm install -g @tiahui/anitorrent-cli@latest
 ```
 
 ## 🔧 Quick Setup
@@ -75,6 +137,7 @@ Commands:
 │   ├── check                  # Verify configuration
 │   ├── show                   # Display current config
 │   ├── test                   # Test service connections
+│   ├── system-check           # Check system dependencies
 │   └── reset                  # Reset configuration
 │
 ├── video                      # 🎬 Video processing operations
@@ -164,6 +227,9 @@ anitorrent config check
 
 # Test service connections
 anitorrent config test
+
+# Check system dependencies (Ubuntu/Linux)
+anitorrent config system-check
 
 # Show configuration (hides sensitive values)
 anitorrent config show
@@ -553,6 +619,11 @@ anitorrent config setup
 anitorrent config test
 ```
 
+**System dependencies missing (Ubuntu/Linux):**
+```bash
+anitorrent config system-check
+```
+
 **AI Translation not working:**
 - Ensure Claude API key is configured
 - Check API key validity in configuration
@@ -608,6 +679,19 @@ brew install ffmpeg mkvtoolnix
 ```bash
 sudo apt update
 sudo apt install ffmpeg mkvtoolnix
+```
+
+**Other Linux distributions:**
+```bash
+# Fedora
+sudo dnf install ffmpeg mkvtoolnix
+
+# CentOS/RHEL
+sudo yum install epel-release
+sudo yum install ffmpeg mkvtoolnix
+
+# Arch Linux
+sudo pacman -S ffmpeg mkvtoolnix-cli
 ```
 
 ## 🤝 Contributing

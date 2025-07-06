@@ -284,8 +284,8 @@ class VideoService {
     const listFilePath = path.join(path.dirname(outputPath), `concat_list_${Date.now()}.txt`);
     
     try {
-      const listContent = `file '${introPath.replace(/\\/g, '/')}'
-file '${inputVideoPath.replace(/\\/g, '/')}'`;
+      const listContent = `file '${introPath.replace(/\\/g, '/').replace(/'/g, "'\"'\"'")}'
+file '${inputVideoPath.replace(/\\/g, '/').replace(/'/g, "'\"'\"'")}'`;
       
       await fs.writeFile(listFilePath, listContent, 'utf8');
 
@@ -413,8 +413,8 @@ file '${inputVideoPath.replace(/\\/g, '/')}'`;
     const listFilePath = path.join(path.dirname(outputPath), `video_concat_list_${Date.now()}.txt`);
     
     try {
-      const listContent = `file '${introPath.replace(/\\/g, '/')}'
-file '${inputVideoPath.replace(/\\/g, '/')}'`;
+      const listContent = `file '${introPath.replace(/\\/g, '/').replace(/'/g, "'\"'\"'")}'
+file '${inputVideoPath.replace(/\\/g, '/').replace(/'/g, "'\"'\"'")}'`;
       
       await fs.writeFile(listFilePath, listContent, 'utf8');
 

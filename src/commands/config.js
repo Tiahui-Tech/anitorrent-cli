@@ -6,6 +6,7 @@ const ConfigManager = require('../utils/config');
 const { logger } = require('../utils/logger');
 const Validators = require('../utils/validators');
 const PeerTubeService = require('../services/peertube-service');
+const SystemCheck = require('../utils/system-check');
 
 const configCommand = new Command('config');
 configCommand.description('Configuration management');
@@ -381,6 +382,32 @@ configCommand
       
       logger.header('Testing Service Connections');
       
+      const systemCheck = new SystemCheck();
+      const depsSpinner = ora('Checking system dependencies...').start();
+      
+      try {
+        const dependencies = await systemCheck.checkAllDependencies();
+        
+        if (dependencies.allAvailable) {
+          depsSpinner.succeed('All system dependencies are available');
+        } else {
+          depsSpinner.warn('Some system dependencies are missing');
+          
+          const report = systemCheck.generateInstallationReport(dependencies);
+          
+          for (const item of report) {
+            logger.warning(`${item.tool} is not fully installed`);
+            if (item.missing.length > 0) {
+              logger.info(`Missing commands: ${item.missing.join(', ')}`, 1);
+            }
+            logger.info(`Install command: ${item.installCommand}`, 1);
+            logger.separator();
+          }
+        }
+      } catch (error) {
+        depsSpinner.fail(`Dependency check failed: ${error.message}`);
+      }
+      
       const spinner = ora('Testing R2 connection...').start();
       try {
         const S3Service = require('../services/s3-service');
@@ -477,6 +504,67 @@ configCommand
       
     } catch (error) {
       logger.error(`Reset failed: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+configCommand
+  .command('system-check')
+  .description('Check system dependencies and compatibility')
+  .action(async () => {
+    try {
+      const SystemCheck = require('../utils/system-check');
+      const systemCheck = new SystemCheck();
+      
+      logger.header('System Compatibility Check');
+      
+      logger.info(`Platform: ${systemCheck.platform}`);
+      if (systemCheck.isLinux) {
+        const distro = systemCheck.getDistribution();
+        logger.info(`Distribution: ${distro}`);
+      }
+      logger.separator();
+      
+      const spinner = ora('Checking system dependencies...').start();
+      
+      try {
+        const dependencies = await systemCheck.checkAllDependencies();
+        
+        if (dependencies.allAvailable) {
+          spinner.succeed('All system dependencies are available');
+          logger.success('Your system is ready to use AniTorrent CLI!');
+        } else {
+          spinner.warn('Some system dependencies are missing');
+          
+          const report = systemCheck.generateInstallationReport(dependencies);
+          
+          logger.warning('Missing Dependencies:');
+          logger.separator();
+          
+          for (const item of report) {
+            logger.error(`❌ ${item.tool}`);
+            if (item.missing.length > 0) {
+              logger.info(`   Missing: ${item.missing.join(', ')}`, 1);
+            }
+            logger.info(`   Install: ${item.installCommand}`, 1);
+            logger.separator();
+          }
+          
+          logger.info('Please install the missing dependencies and run this command again.');
+        }
+        
+        logger.separator();
+        logger.info('Detailed dependency status:');
+        logger.info(`FFmpeg: ${dependencies.ffmpeg.ffmpeg ? '✅' : '❌'} ffmpeg, ${dependencies.ffmpeg.ffprobe ? '✅' : '❌'} ffprobe`);
+        logger.info(`MKVToolNix: ${dependencies.mkvtoolnix.mkvmerge ? '✅' : '❌'} mkvmerge, ${dependencies.mkvtoolnix.mkvextract ? '✅' : '❌'} mkvextract`);
+        
+      } catch (error) {
+        spinner.fail(`Dependency check failed: ${error.message}`);
+        logger.error('Unable to check system dependencies. Please ensure you have proper permissions.');
+      }
+      
+    } catch (error) {
+      logger.error(`System check failed: ${error.message}`);
       process.exit(1);
     }
   });
