@@ -1,6 +1,6 @@
 {
   "name": "@tiahui/anitorrent-cli",
-  "version": "1.1.3",
+  "version": "1.1.6",
   "description": "CLI tool for video management with PeerTube and Cloudflare R2",
   "main": "src/index.js",
   "bin": {
@@ -49,6 +49,7 @@
     "anitomyscript": "github:Tiahui-Tech/anitomyscript",
     "aws-sdk": "^2.1692.0",
     "chalk": "^4.1.2",
+    "check-disk-space": "^3.4.0",
     "commander": "^11.0.0",
     "inquirer": "^8.2.6",
     "ora": "^5.4.1",

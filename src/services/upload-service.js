@@ -383,16 +383,20 @@ class UploadService {
 
   async cleanupTorrentFile(fileInfo, torrentService, stopSeeding = true) {
     if (fileInfo.downloadedFromTorrent && torrentService) {
-      this.logger.step('🗑️', 'Cleaning up torrent file');
-      
-      const torrentCleanupSpinner = ora('Deleting downloaded torrent file...').start();
-      await torrentService.cleanupFile(fileInfo.resolvedPath);
-      
       if (stopSeeding) {
+        this.logger.step('🗑️', 'Cleaning up torrent file');
+        
+        const torrentCleanupSpinner = ora('Deleting downloaded torrent file...').start();
+        await torrentService.cleanupFile(fileInfo.resolvedPath);
         torrentService.destroy();
         torrentCleanupSpinner.succeed('Torrent file deleted and seeding stopped');
       } else {
-        torrentCleanupSpinner.succeed('Torrent file deleted (seeding continues)');
+        this.logger.step('🌱', 'Keeping file for seeding');
+        
+        const seedingSpinner = ora('Maintaining file for seeding...').start();
+        seedingSpinner.succeed('File kept for seeding (torrent remains active)');
+        this.logger.info(`Seeding: ${fileInfo.fileName}`, 1);
+        this.logger.info(`Location: ${fileInfo.resolvedPath}`, 1);
       }
     }
   }

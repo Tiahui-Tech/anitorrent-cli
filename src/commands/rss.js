@@ -7,6 +7,7 @@ const ConfigManager = require('../utils/config');
 const Validators = require('../utils/validators');
 const UploadService = require('../services/upload-service');
 const AniTorrentService = require('../services/anitorrent-service');
+const TorrentService = require('../services/torrent-service');
 
 const rssCommand = new Command('rss');
 rssCommand.description('RSS feed operations');
@@ -170,6 +171,8 @@ rssCommand
   .option('--anime-id <id>', 'AniList anime ID for episode update')
   .option('--track <number>', 'subtitle track number for extraction')
   .option('--use-title', 'use the title of the video for the upload name')
+  .option('--kill-existing', 'kill existing torrent processes before starting')
+  .option('--clean-downloads', 'clean existing files from download directory before starting')
   .action(async (options) => {
     const logger = new Logger({ 
       verbose: options.debug || false,
@@ -177,6 +180,17 @@ rssCommand
     });
 
     try {
+      if (options.killExisting) {
+        logger.info('🔄 Cleaning up existing torrent processes...');
+        await TorrentService.killExistingProcesses();
+      }
+
+      if (options.cleanDownloads) {
+        logger.info('🧹 Cleaning existing download files...');
+        const tempTorrentService = new TorrentService({ logger });
+        await tempTorrentService.cleanupExistingFiles();
+      }
+
       logger.header('RSS Feed Test');
       
       const toshoSpinner = ora('Fetching from AnimeToSho RSS...').start();
@@ -317,7 +331,7 @@ rssCommand
         let fileInfo = null;
 
         try {
-          const downloadResult = await uploadService.downloadFromTorrent(firstEpisode.magnet_uri, logger);
+          const downloadResult = await uploadService.downloadFromTorrent(firstEpisode.torrent_url, logger);
           fileInfo = downloadResult.fileInfo;
           torrentService = downloadResult.torrentService;
 
@@ -394,6 +408,8 @@ rssCommand
   .option('--use-title', 'use the title of the video for the upload name')
   .option('--dry-run', 'show what would be processed without downloading (single run)')
   .option('--single-run', 'run once instead of continuously')
+  .option('--kill-existing', 'kill existing torrent processes before starting')
+  .option('--clean-downloads', 'clean existing files from download directory before starting')
   .action(async (options) => {
     const logger = new Logger({ 
       verbose: options.debug || false,
@@ -433,6 +449,17 @@ rssCommand
       if (!Validators.isValidPrivacyLevel(privacy)) {
         logger.error('Invalid privacy level (must be 1-5)');
         process.exit(1);
+      }
+
+      if (options.killExisting) {
+        logger.info('🔄 Cleaning up existing torrent processes...');
+        await TorrentService.killExistingProcesses();
+      }
+
+      if (options.cleanDownloads) {
+        logger.info('🧹 Cleaning existing download files...');
+        const tempTorrentService = new TorrentService({ logger });
+        await tempTorrentService.cleanupExistingFiles();
       }
 
       logger.header('RSS Auto Download & Upload');
@@ -572,7 +599,7 @@ rssCommand
               const animeId = anizipData.mappings.anilist_id;
               
               const downloadResult = await uploadService.downloadFromTorrent(
-                episode.magnet_uri, 
+                episode.torrent_url, 
                 logger, 
                 { keepSeeding: true }
               );
@@ -615,6 +642,22 @@ rssCommand
               }
               
               errorCount++;
+              
+              if (error.message.includes('ENOSPC') || error.message.includes('disk space')) {
+                logger.error('🚨 Disk space issue detected. Cleaning up download directory...');
+                
+                if (lastTorrentService) {
+                  try {
+                    await lastTorrentService.cleanupDownloadDirectory();
+                    logger.info('Download directory cleaned up');
+                  } catch (cleanupError) {
+                    logger.warning(`Failed to cleanup download directory: ${cleanupError.message}`);
+                  }
+                }
+                
+                logger.warning('Stopping processing due to disk space issues');
+                break;
+              }
               
               if (options.debug) {
                 console.error(error);
@@ -696,11 +739,11 @@ rssCommand
               });
               logger.separator();
               
-              logger.info('📁 File Management:');
-              logger.info('• Torrents will continue seeding in the background');
-              logger.info('• Maximum seeding limit: 10 torrents');
-              logger.info('• Oldest files are automatically deleted when limit is exceeded');
-              logger.info('• Physical files are removed from disk when torrents are stopped');
+              logger.info('📁 Seeding Management:');
+              logger.info('• Physical files are kept on disk for seeding');
+              logger.info('• Maximum concurrent seeding: 10 torrents');
+              logger.info('• When limit exceeded: oldest torrents are stopped and files deleted');
+              logger.info('• Files remain available for sharing until replaced by newer downloads');
             }
           }
         
@@ -724,6 +767,15 @@ rssCommand
               const seedingStats = lastTorrentService.getSeedingStats();
               if (seedingStats.totalFiles > 0) {
                 logger.info(`Currently seeding: ${chalk.blue(seedingStats.totalFiles)}/${chalk.blue(seedingStats.maxFiles)} torrents (${chalk.white(lastTorrentService.formatBytes(seedingStats.totalSize))} total)`);
+                
+                if (options.debug) {
+                  const seedingStatus = lastTorrentService.getSeedingStatus();
+                  logger.info('📁 Active seeding files:');
+                  seedingStatus.forEach((torrent, index) => {
+                    logger.info(`   ${index + 1}. ${chalk.cyan(torrent.fileName)}`);
+                    logger.info(`      Ratio: ${chalk.yellow(torrent.ratio.toFixed(2))} | Uploaded: ${chalk.green(lastTorrentService.formatBytes(torrent.uploaded))}`);
+                  });
+                }
               }
             }
           }
