@@ -20,11 +20,11 @@ async function scanDirectoryForVideos(dir, recursive = false, logger) {
   async function scanDir(currentDir, relativePath = '') {
     try {
       const entries = await fs.readdir(currentDir, { withFileTypes: true });
-      
+
       for (const entry of entries) {
         const fullPath = path.join(currentDir, entry.name);
         const relativeFilePath = path.join(relativePath, entry.name);
-        
+
         if (entry.isFile()) {
           if (Validators.isValidVideoFile(fullPath)) {
             const stats = await fs.stat(fullPath);
@@ -34,7 +34,7 @@ async function scanDirectoryForVideos(dir, recursive = false, logger) {
               fileName: entry.name,
               downloadedFromTorrent: false,
               size: stats.size,
-              directory: relativePath || '.'
+              directory: relativePath || '.',
             });
           }
         } else if (entry.isDirectory() && recursive) {
@@ -57,11 +57,11 @@ async function scanDirectoryForSubtitles(dir, recursive = false, logger) {
   async function scanDir(currentDir, relativePath = '') {
     try {
       const entries = await fs.readdir(currentDir, { withFileTypes: true });
-      
+
       for (const entry of entries) {
         const fullPath = path.join(currentDir, entry.name);
         const relativeFilePath = path.join(relativePath, entry.name);
-        
+
         if (entry.isFile()) {
           if (Validators.isValidSubtitleFile(fullPath)) {
             const stats = await fs.stat(fullPath);
@@ -70,7 +70,7 @@ async function scanDirectoryForSubtitles(dir, recursive = false, logger) {
               resolvedPath: fullPath,
               fileName: entry.name,
               size: stats.size,
-              directory: relativePath || '.'
+              directory: relativePath || '.',
             });
           }
         } else if (entry.isDirectory() && recursive) {
@@ -97,16 +97,14 @@ uploadCommand
   .option('--timestamp', 'add timestamp to filename')
   .action(async (file, options) => {
     const isLogs = uploadCommand.parent?.opts()?.logs || false;
-    const logger = new Logger({ 
+    const logger = new Logger({
       verbose: false,
-      quiet: uploadCommand.parent?.opts()?.quiet || false
+      quiet: uploadCommand.parent?.opts()?.quiet || false,
     });
-
-
 
     try {
       const fileValidation = await Validators.validateFilePath(file);
-      
+
       if (!fileValidation.exists) {
         logger.error(`File not found: "${fileValidation.originalPath}"`);
         if (fileValidation.originalPath !== fileValidation.resolvedPath) {
@@ -125,7 +123,7 @@ uploadCommand
       const r2Config = config.getR2Config();
 
       const s3Service = new S3Service(r2Config);
-      
+
       let uploadFileName = options.name;
       if (options.timestamp) {
         const ext = path.extname(resolvedFile);
@@ -148,21 +146,23 @@ uploadCommand
       logger.separator();
 
       const spinner = ora('Uploading to R2...').start();
-      
+
       try {
-        const result = await s3Service.uploadFile(resolvedFile, `videos/${uploadFileName}`, true);
+        const result = await s3Service.uploadFile(
+          resolvedFile,
+          `videos/${uploadFileName}`,
+          true
+        );
         spinner.succeed('Upload completed successfully');
 
         logger.success('Upload Details:');
         logger.info(`Public URL: ${result.publicUrl}`, 1);
         logger.info(`ETag: ${result.ETag}`, 1);
         logger.info(`Location: ${result.Location}`, 1);
-
       } catch (error) {
         spinner.fail(`Upload failed: ${error.message}`);
         process.exit(1);
       }
-
     } catch (error) {
       logger.error(`Upload failed: ${error.message}`);
       process.exit(1);
@@ -172,9 +172,15 @@ uploadCommand
 uploadCommand
   .command('auto')
   .description('Upload to R2 and automatically import to PeerTube')
-  .argument('[file]', 'file to upload (supports absolute and relative paths) or torrent URL/magnet when using --torrent. If not specified, uploads all video files from current directory')
+  .argument(
+    '[file]',
+    'file to upload (supports absolute and relative paths) or torrent URL/magnet when using --torrent. If not specified, uploads all video files from current directory'
+  )
   .option('--torrent', 'download file from torrent URL or magnet link')
-  .option('--name <name>', 'custom name for the video (ignored when processing multiple files)')
+  .option(
+    '--name <name>',
+    'custom name for the video (ignored when processing multiple files)'
+  )
   .option('--timestamp', 'add timestamp to filename')
   .option('--channel <id>', 'PeerTube channel ID')
   .option('--privacy <level>', 'privacy level (1-5)')
@@ -184,16 +190,21 @@ uploadCommand
   .option('--anime-id <id>', 'AniList anime ID for episode update')
   .option('--sub-folders', 'search for video files in subfolders as well')
   .option('--use-title', 'use the title of the video for the upload name')
-  .option('--track <number>', 'subtitle track number for extraction (if not specified, auto-finds Spanish Latino)')
+  .option(
+    '--track <number>',
+    'subtitle track number for extraction (if not specified, auto-finds Spanish Latino)'
+  )
   .action(async (file, options) => {
     const isLogs = uploadCommand.parent?.opts()?.logs || false;
-    const logger = new Logger({ 
+    const logger = new Logger({
       verbose: false,
-      quiet: uploadCommand.parent?.opts()?.quiet || false
+      quiet: uploadCommand.parent?.opts()?.quiet || false,
     });
 
     if (options.torrent && !file) {
-      logger.error('You must specify a torrent URL/magnet when using --torrent option');
+      logger.error(
+        'You must specify a torrent URL/magnet when using --torrent option'
+      );
       process.exit(1);
     }
 
@@ -204,8 +215,12 @@ uploadCommand
       if (!file) {
         const currentDir = process.cwd();
         const searchSubfolders = options.subFolders;
-        
-        logger.header(`Scanning ${searchSubfolders ? 'Directory Tree' : 'Current Directory'} for Video Files`);
+
+        logger.header(
+          `Scanning ${
+            searchSubfolders ? 'Directory Tree' : 'Current Directory'
+          } for Video Files`
+        );
         logger.info(`Directory: ${currentDir}`);
         if (searchSubfolders) {
           logger.info('Including subfolders: Yes');
@@ -213,16 +228,24 @@ uploadCommand
         logger.separator();
 
         const scanSpinner = ora('Scanning for video files...').start();
-        filesToProcess = await scanDirectoryForVideos(currentDir, searchSubfolders, logger);
+        filesToProcess = await scanDirectoryForVideos(
+          currentDir,
+          searchSubfolders,
+          logger
+        );
         scanSpinner.succeed('Scan completed');
 
         if (filesToProcess.length === 0) {
-          logger.error(`No video files found in the ${searchSubfolders ? 'directory tree' : 'current directory'}`);
+          logger.error(
+            `No video files found in the ${
+              searchSubfolders ? 'directory tree' : 'current directory'
+            }`
+          );
           process.exit(1);
         }
 
         logger.success(`Found ${filesToProcess.length} video file(s):`);
-        
+
         const groupedFiles = {};
         filesToProcess.forEach((fileInfo) => {
           if (!groupedFiles[fileInfo.directory]) {
@@ -231,17 +254,25 @@ uploadCommand
           groupedFiles[fileInfo.directory].push(fileInfo);
         });
 
-        Object.keys(groupedFiles).sort().forEach((dir) => {
-          logger.info(`📁 ${dir}:`, 1);
-          groupedFiles[dir].forEach((fileInfo, index) => {
-            const fileSize = Validators.formatFileSize(fileInfo.size);
-            logger.info(`  ${index + 1}. ${fileInfo.fileName} (${fileSize})`, 2);
+        Object.keys(groupedFiles)
+          .sort()
+          .forEach((dir) => {
+            logger.info(`📁 ${dir}:`, 1);
+            groupedFiles[dir].forEach((fileInfo, index) => {
+              const fileSize = Validators.formatFileSize(fileInfo.size);
+              logger.info(
+                `  ${index + 1}. ${fileInfo.fileName} (${fileSize})`,
+                2
+              );
+            });
           });
-        });
-        
+
         logger.separator();
-        
-        const totalSize = filesToProcess.reduce((sum, file) => sum + file.size, 0);
+
+        const totalSize = filesToProcess.reduce(
+          (sum, file) => sum + file.size,
+          0
+        );
         logger.info(`Total files: ${filesToProcess.length}`);
         logger.info(`Total size: ${Validators.formatFileSize(totalSize)}`);
         logger.separator();
@@ -251,8 +282,8 @@ uploadCommand
             type: 'confirm',
             name: 'proceed',
             message: 'Do you want to proceed with uploading these files?',
-            default: false
-          }
+            default: false,
+          },
         ]);
 
         if (!proceed) {
@@ -261,7 +292,6 @@ uploadCommand
         }
 
         logger.separator();
-
       } else if (options.torrent) {
         logger.header('Torrent Download Process');
         logger.info(`Torrent URL/Magnet: ${file}`);
@@ -270,18 +300,20 @@ uploadCommand
         const config = new ConfigManager();
         config.validateRequired();
         const uploadService = new UploadService(config, logger);
-        
+
         try {
-          const downloadResult = await uploadService.downloadFromTorrent(file, logger);
+          const downloadResult = await uploadService.downloadFromTorrent(
+            file,
+            logger
+          );
           filesToProcess = [downloadResult.fileInfo];
           torrentService = downloadResult.torrentService;
-          
         } catch (error) {
           process.exit(1);
         }
       } else {
         const fileValidation = await Validators.validateFilePath(file);
-        
+
         if (!fileValidation.exists) {
           logger.error(`File not found: "${fileValidation.originalPath}"`);
           if (fileValidation.originalPath !== fileValidation.resolvedPath) {
@@ -294,12 +326,14 @@ uploadCommand
           logger.warning('File does not appear to be a video file');
         }
 
-        filesToProcess = [{
-          originalPath: fileValidation.originalPath,
-          resolvedPath: fileValidation.resolvedPath,
-          fileName: path.basename(fileValidation.resolvedPath),
-          downloadedFromTorrent: false
-        }];
+        filesToProcess = [
+          {
+            originalPath: fileValidation.originalPath,
+            resolvedPath: fileValidation.resolvedPath,
+            fileName: path.basename(fileValidation.resolvedPath),
+            downloadedFromTorrent: false,
+          },
+        ];
 
         if (isLogs) {
           logger.info(`Using file: ${fileValidation.resolvedPath}`);
@@ -308,18 +342,22 @@ uploadCommand
 
       const config = new ConfigManager();
       config.validateRequired();
-      
+
       const r2Config = config.getR2Config();
       const peertubeConfig = config.getPeerTubeConfig();
       const defaults = config.getDefaults();
 
-      const channelId = options.channel ? parseInt(options.channel) : await config.getDefaultChannelId();
-      const privacy = options.privacy ? parseInt(options.privacy) : defaults.privacy;
+      const channelId = options.channel
+        ? parseInt(options.channel)
+        : await config.getDefaultChannelId();
+      const privacy = options.privacy
+        ? parseInt(options.privacy)
+        : defaults.privacy;
       const videoPassword = options.password || defaults.videoPassword;
       const maxWaitMinutes = parseInt(options.wait);
       const keepR2File = options.keepR2;
       const animeId = options.animeId;
-      
+
       let subtitleTrack = null;
       if (options.track !== undefined) {
         subtitleTrack = parseInt(options.track);
@@ -339,7 +377,9 @@ uploadCommand
         process.exit(1);
       }
 
-      logger.header(`Auto Upload & Import Process - ${filesToProcess.length} file(s)`);
+      logger.header(
+        `Auto Upload & Import Process - ${filesToProcess.length} file(s)`
+      );
       logger.info(`Channel ID: ${channelId}`);
       logger.info(`Privacy: ${privacy}`);
       logger.info(`Keep R2 file: ${keepR2File ? 'Yes' : 'No'}`);
@@ -356,7 +396,7 @@ uploadCommand
 
       const results = [];
       const errors = [];
-      
+
       const uploadService = new UploadService(config, logger);
 
       for (let i = 0; i < filesToProcess.length; i++) {
@@ -364,8 +404,10 @@ uploadCommand
         const currentFile = i + 1;
         const totalFiles = filesToProcess.length;
 
-        logger.header(`Processing File ${currentFile}/${totalFiles}: ${fileInfo.fileName}`);
-        
+        logger.header(
+          `Processing File ${currentFile}/${totalFiles}: ${fileInfo.fileName}`
+        );
+
         try {
           const uploadOptions = {
             channelId,
@@ -375,33 +417,42 @@ uploadCommand
             keepR2File,
             animeId,
             subtitleTrack,
-            customName: (options.name && filesToProcess.length === 1) ? options.name : null,
+            customName:
+              options.name && filesToProcess.length === 1 ? options.name : null,
             timestamp: options.timestamp,
-            useTitle: options.useTitle
+            useTitle: options.useTitle,
           };
 
-          const result = await uploadService.processFileUpload(fileInfo, uploadOptions);
-          
+          const result = await uploadService.processFileUpload(
+            fileInfo,
+            uploadOptions
+          );
+
           if (fileInfo.downloadedFromTorrent && torrentService) {
             await uploadService.cleanupTorrentFile(fileInfo, torrentService);
           }
 
           results.push(result);
-          logger.success(`✅ File ${currentFile}/${totalFiles} completed successfully`);
-
+          logger.success(
+            `✅ File ${currentFile}/${totalFiles} completed successfully`
+          );
         } catch (error) {
-          logger.error(`❌ File ${currentFile}/${totalFiles} failed: ${error.message}`);
-          
+          logger.error(
+            `❌ File ${currentFile}/${totalFiles} failed: ${error.message}`
+          );
+
           errors.push({
             fileName: fileInfo.fileName,
-            error: error.message
+            error: error.message,
           });
 
           if (fileInfo.downloadedFromTorrent && torrentService) {
             try {
               await uploadService.cleanupTorrentFile(fileInfo, torrentService);
             } catch (cleanupError) {
-              logger.error(`Failed to cleanup torrent file: ${cleanupError.message}`);
+              logger.error(
+                `Failed to cleanup torrent file: ${cleanupError.message}`
+              );
             }
           }
         }
@@ -422,7 +473,13 @@ uploadCommand
           if (result.video) {
             logger.info(`   Video ID: ${result.video.id}`, 2);
             logger.info(`   Watch URL: ${result.video.url}`, 2);
-            logger.info(`   Embed URL: ${peertubeConfig.apiUrl.replace('/api/v1', '')}/videos/embed/${result.video.shortUUID}`, 2);
+            logger.info(
+              `   Embed URL: ${peertubeConfig.apiUrl.replace(
+                '/api/v1',
+                ''
+              )}/videos/embed/${result.video.shortUUID}`,
+              2
+            );
           }
           if (result.keepR2File) {
             logger.info(`   R2 File: ${result.videoUrl}`, 2);
@@ -439,15 +496,14 @@ uploadCommand
           logger.info(`${index + 1}. ${error.fileName}: ${error.error}`, 1);
         });
         logger.separator();
-        
+
         if (results.length === 0) {
           process.exit(1);
         }
       }
-
     } catch (error) {
       logger.error(`Auto upload failed: ${error.message}`);
-      
+
       if (torrentService) {
         try {
           filesToProcess.forEach(async (fileInfo) => {
@@ -457,12 +513,14 @@ uploadCommand
           });
           torrentService.destroy();
         } catch (cleanupError) {
-                                             if (isLogs) {
-                         logger.info(`Failed to cleanup torrent files: ${cleanupError.message}`);
-                       }
+          if (isLogs) {
+            logger.info(
+              `Failed to cleanup torrent files: ${cleanupError.message}`
+            );
+          }
         }
       }
-      
+
       process.exit(1);
     }
   });
@@ -474,16 +532,20 @@ uploadCommand
   .option('--timestamp', 'add timestamp to filenames')
   .action(async (options) => {
     const isLogs = uploadCommand.parent?.opts()?.logs || false;
-    const logger = new Logger({ 
+    const logger = new Logger({
       verbose: false,
-      quiet: uploadCommand.parent?.opts()?.quiet || false
+      quiet: uploadCommand.parent?.opts()?.quiet || false,
     });
 
     try {
       const currentDir = process.cwd();
       const searchSubfolders = options.subFolders;
-      
-      logger.header(`Scanning ${searchSubfolders ? 'Directory Tree' : 'Current Directory'} for Subtitle Files`);
+
+      logger.header(
+        `Scanning ${
+          searchSubfolders ? 'Directory Tree' : 'Current Directory'
+        } for Subtitle Files`
+      );
       logger.info(`Directory: ${currentDir}`);
       if (searchSubfolders) {
         logger.info('Including subfolders: Yes');
@@ -491,16 +553,24 @@ uploadCommand
       logger.separator();
 
       const scanSpinner = ora('Scanning for subtitle files...').start();
-      const filesToProcess = await scanDirectoryForSubtitles(currentDir, searchSubfolders, logger);
+      const filesToProcess = await scanDirectoryForSubtitles(
+        currentDir,
+        searchSubfolders,
+        logger
+      );
       scanSpinner.succeed('Scan completed');
 
       if (filesToProcess.length === 0) {
-        logger.error(`No subtitle files found in the ${searchSubfolders ? 'directory tree' : 'current directory'}`);
+        logger.error(
+          `No subtitle files found in the ${
+            searchSubfolders ? 'directory tree' : 'current directory'
+          }`
+        );
         process.exit(1);
       }
 
       logger.success(`Found ${filesToProcess.length} subtitle file(s):`);
-      
+
       const groupedFiles = {};
       filesToProcess.forEach((fileInfo) => {
         if (!groupedFiles[fileInfo.directory]) {
@@ -509,17 +579,25 @@ uploadCommand
         groupedFiles[fileInfo.directory].push(fileInfo);
       });
 
-      Object.keys(groupedFiles).sort().forEach((dir) => {
-        logger.info(`📁 ${dir}:`, 1);
-        groupedFiles[dir].forEach((fileInfo, index) => {
-          const fileSize = Validators.formatFileSize(fileInfo.size);
-          logger.info(`  ${index + 1}. ${fileInfo.fileName} (${fileSize})`, 2);
+      Object.keys(groupedFiles)
+        .sort()
+        .forEach((dir) => {
+          logger.info(`📁 ${dir}:`, 1);
+          groupedFiles[dir].forEach((fileInfo, index) => {
+            const fileSize = Validators.formatFileSize(fileInfo.size);
+            logger.info(
+              `  ${index + 1}. ${fileInfo.fileName} (${fileSize})`,
+              2
+            );
+          });
         });
-      });
-      
+
       logger.separator();
-      
-      const totalSize = filesToProcess.reduce((sum, file) => sum + file.size, 0);
+
+      const totalSize = filesToProcess.reduce(
+        (sum, file) => sum + file.size,
+        0
+      );
       logger.info(`Total files: ${filesToProcess.length}`);
       logger.info(`Total size: ${Validators.formatFileSize(totalSize)}`);
       logger.separator();
@@ -528,9 +606,10 @@ uploadCommand
         {
           type: 'confirm',
           name: 'proceed',
-          message: 'Do you want to proceed with uploading these subtitle files?',
-          default: false
-        }
+          message:
+            'Do you want to proceed with uploading these subtitle files?',
+          default: false,
+        },
       ]);
 
       if (!proceed) {
@@ -553,11 +632,13 @@ uploadCommand
         const currentFile = i + 1;
         const totalFiles = filesToProcess.length;
 
-        logger.header(`Uploading File ${currentFile}/${totalFiles}: ${fileInfo.fileName}`);
-        
+        logger.header(
+          `Uploading File ${currentFile}/${totalFiles}: ${fileInfo.fileName}`
+        );
+
         try {
           let uploadFileName = fileInfo.fileName;
-          
+
           if (options.timestamp) {
             const ext = path.extname(fileInfo.resolvedPath);
             const nameWithoutExt = path.basename(fileInfo.resolvedPath, ext);
@@ -572,9 +653,13 @@ uploadCommand
           logger.separator();
 
           const spinner = ora('Uploading to R2...').start();
-          
-          const result = await s3Service.uploadFile(fileInfo.resolvedPath, `subtitles/${uploadFileName}`, true);
-          
+
+          const result = await s3Service.uploadFile(
+            fileInfo.resolvedPath,
+            `subtitles/${uploadFileName}`,
+            true
+          );
+
           spinner.succeed('Upload completed');
           logger.info(`Public URL: ${result.publicUrl}`, 1);
           logger.info(`ETag: ${result.ETag}`, 1);
@@ -584,17 +669,20 @@ uploadCommand
             uploadName: uploadFileName,
             success: true,
             publicUrl: result.publicUrl,
-            size: fileInfo.size
+            size: fileInfo.size,
           });
 
-          logger.success(`✅ File ${currentFile}/${totalFiles} uploaded successfully`);
-
+          logger.success(
+            `✅ File ${currentFile}/${totalFiles} uploaded successfully`
+          );
         } catch (error) {
-          logger.error(`❌ File ${currentFile}/${totalFiles} failed: ${error.message}`);
-          
+          logger.error(
+            `❌ File ${currentFile}/${totalFiles} failed: ${error.message}`
+          );
+
           errors.push({
             fileName: fileInfo.fileName,
-            error: error.message
+            error: error.message,
           });
         }
 
@@ -624,16 +712,15 @@ uploadCommand
           logger.info(`${index + 1}. ${error.fileName}: ${error.error}`, 1);
         });
         logger.separator();
-        
+
         if (results.length === 0) {
           process.exit(1);
         }
       }
-
     } catch (error) {
       logger.error(`Subtitle upload failed: ${error.message}`);
       process.exit(1);
     }
   });
 
-module.exports = uploadCommand; 
+module.exports = uploadCommand;

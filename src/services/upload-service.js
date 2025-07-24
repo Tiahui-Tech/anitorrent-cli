@@ -201,8 +201,8 @@ class UploadService {
         // Continue with parsed title
       }
       
-      const thumbnailUrl = video.thumbnailPath 
-        ? `https://peertube.anitorrent.com${video.thumbnailPath}`
+      const thumbnailUrl = video.previewPath 
+        ? `https://peertube.anitorrent.com${video.previewPath}`
         : null;
       
       if (!thumbnailUrl) {

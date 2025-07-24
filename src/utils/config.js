@@ -155,7 +155,7 @@ class ConfigManager {
         return {
             channelId: this.get('DEFAULT_CHANNEL_ID') ? parseInt(this.get('DEFAULT_CHANNEL_ID')) : null,
             privacy: parseInt(this.get('DEFAULT_PRIVACY_LEVEL', '5')),
-            videoPassword: this.get('DEFAULT_VIDEO_PASSWORD', '12345')
+            videoPassword: this.get('DEFAULT_VIDEO_PASSWORD') || null
         };
     }
 

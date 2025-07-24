@@ -106,7 +106,8 @@ class AniTorrentService {
             embedUrl,
             thumbnailUrl,
             description: description || null,
-            duration: duration || null
+            duration: duration || null,
+            isReady: false
         };
 
         try {
