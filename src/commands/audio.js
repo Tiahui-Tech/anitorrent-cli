@@ -96,14 +96,13 @@ audioCommand
 
 audioCommand
   .command('extract')
-  .description('Extract audio tracks from videos')
+  .description('Extract audio tracks from videos with Japanese default')
   .argument('[file]', 'video file path (if not provided, extracts from all videos in folder)')
   .option('--folder <path>', 'folder path to search for videos (default: current directory)')
-  .option('--track <number>', 'audio track number to extract (if not specified, auto-finds Spanish Latino)')
+  .option('--track <number>', 'audio track number to extract')
   .option('--format <format>', 'output audio format (mp3, aac, flac, wav, ogg)', 'mp3')
   .option('--bitrate <bitrate>', 'audio bitrate (e.g., 192k, 256k, 320k)', '192k')
-  .option('--all-tracks', 'extract all audio tracks from the file')
-  .option('--advanced', 'use advanced extraction with mkvmerge (better track naming)')
+  .option('--all', 'extract all audio tracks from the file')
   .option('--prefix <prefix>', 'custom prefix for output files (default: video filename)')
   .action(async (file, options) => {
     const isLogs = audioCommand.parent?.opts()?.logs || false;
@@ -180,87 +179,38 @@ audioCommand
           process.exit(1);
         }
 
-        if (options.allTracks) {
-          if (options.advanced) {
-            logger.header('Advanced Audio Extraction (All Tracks)');
-            logger.info(`File: ${videoFile}`);
-            logger.info(`Format: ${format.toUpperCase()}`);
-            logger.info(`Bitrate: ${bitrate}`);
-            logger.info(`Method: mkvmerge + ffmpeg`);
-            if (options.prefix) {
-              logger.info(`Prefix: ${options.prefix}`);
-            }
-            logger.separator();
+        if (options.all) {
+          logger.header('Extract All Audio Tracks with Japanese Default');
+          logger.info(`File: ${videoFile}`);
+          logger.info(`Format: ${format.toUpperCase()}`);
+          logger.separator();
 
-            try {
-              const results = await audioService.extractAllAudioTracksAdvanced(
-                videoFile, 
-                folderPath, 
-                format, 
-                bitrate,
-                options.prefix
-              );
+          const spinner = ora('Extracting all audio tracks...').start();
+          const results = await audioService.extractAllAudioTracks(videoFile, folderPath, format, options.prefix);
+          spinner.succeed(`Extraction completed`);
 
-              const successful = results.filter(r => r.success).length;
-              const failed = results.filter(r => !r.success).length;
+          const successful = results.filter(r => r.success).length;
+          const failed = results.filter(r => !r.success).length;
 
-              logger.success(`Advanced extraction completed: ${successful} successful, ${failed} failed`);
+          logger.success(`Extraction completed: ${successful} successful, ${failed} failed`);
 
-              if (isLogs) {
-                results.forEach(result => {
-                  if (result.success) {
-                    logger.info(`✓ Track ${result.trackIndex} (${result.trackInfo.language}) → ${result.outputFile}`, 1);
-                  } else {
-                    logger.info(`✗ Track ${result.trackIndex}: ${result.error}`, 1);
-                  }
-                });
+          if (isLogs) {
+            results.forEach(result => {
+              if (result.success) {
+                logger.info(`✓ Track ${result.track.trackNumber} (${result.track.language}) → ${result.outputFile}`, 1);
+              } else {
+                logger.info(`✗ Track ${result.track.trackNumber}: ${result.error}`, 1);
               }
-            } catch (error) {
-              logger.error(`Advanced extraction failed: ${error.message}`);
-              logger.info('Falling back to standard extraction...');
-              
-              const spinner = ora('Extracting all audio tracks (standard method)...').start();
-              const results = await audioService.extractAllAudioTracks(videoFile, folderPath, format, options.prefix);
-              spinner.succeed(`Extraction completed`);
-
-              const successful = results.filter(r => r.success).length;
-              const failed = results.filter(r => !r.success).length;
-
-              logger.success(`Standard extraction completed: ${successful} successful, ${failed} failed`);
-            }
-          } else {
-            logger.header('Extract All Audio Tracks');
-            logger.info(`File: ${videoFile}`);
-            logger.info(`Format: ${format.toUpperCase()}`);
-            logger.separator();
-
-            const spinner = ora('Extracting all audio tracks...').start();
-            const results = await audioService.extractAllAudioTracks(videoFile, folderPath, format, options.prefix);
-            spinner.succeed(`Extraction completed`);
-
-            const successful = results.filter(r => r.success).length;
-            const failed = results.filter(r => !r.success).length;
-
-            logger.success(`Extraction completed: ${successful} successful, ${failed} failed`);
-
-            if (isLogs) {
-              results.forEach(result => {
-                if (result.success) {
-                  logger.info(`✓ Track ${result.track.trackNumber} (${result.track.language}) → ${result.outputFile}`, 1);
-                } else {
-                  logger.info(`✗ Track ${result.track.trackNumber}: ${result.error}`, 1);
-                }
-              });
-            }
+            });
           }
         } else {
           logger.header('Single Audio Track Extraction');
           logger.info(`File: ${videoFile}`);
-          
+
           if (audioTrack !== null) {
             logger.info(`Track: ${audioTrack}`);
           } else {
-            logger.info('Track: Auto-detect Spanish Latino');
+            logger.info('Track: Japanese (Default)');
           }
           logger.info(`Format: ${format.toUpperCase()}`);
           logger.info(`Bitrate: ${bitrate}`);
@@ -269,7 +219,7 @@ audioCommand
           let targetTrack = audioTrack;
           if (targetTrack === null) {
             const tracks = await audioService.listAudioTracks(videoFile);
-            targetTrack = audioService.findDefaultSpanishTrack(tracks);
+            targetTrack = tracks.findIndex(t => t.language === 'jpn' || t.language === 'ja');
             if (targetTrack === -1) {
               targetTrack = 0;
             }
@@ -277,24 +227,20 @@ audioCommand
           }
 
           const tracks = await audioService.listAudioTracks(videoFile);
-          const spanishTracks = tracks.filter(t => t.language === 'spa' || t.language === 'es');
           const nameWithoutExt = options.prefix || require('path').parse(videoFile).name;
-          
+
           let outputFile;
-          if (spanishTracks.length === 1 && targetTrack < tracks.length && 
-              (tracks[targetTrack].language === 'spa' || tracks[targetTrack].language === 'es')) {
-            outputFile = `${nameWithoutExt}_lat.${format}`;
-          } else if (targetTrack < tracks.length) {
+          if (targetTrack < tracks.length) {
             const track = tracks[targetTrack];
             const langSuffix = audioService.getLanguageSuffix(track);
             outputFile = langSuffix ? `${nameWithoutExt}_${langSuffix}.${format}` : `${nameWithoutExt}.${format}`;
           } else {
             outputFile = `${nameWithoutExt}.${format}`;
           }
-          
+
           const spinner = ora('Extracting audio track...').start();
           const result = await audioService.extractAudio(videoFile, outputFile, targetTrack, folderPath, format, bitrate);
-          
+
           if (result.success) {
             spinner.succeed(`Audio extracted to: ${result.outputPath}`);
           } else {
@@ -303,13 +249,13 @@ audioCommand
           }
         }
       } else {
-        logger.header('Bulk Audio Extraction');
+        logger.header('Bulk Audio Extraction with Japanese Default');
         logger.info(`Directory: ${folderPath === '.' ? 'Current directory' : folderPath}`);
-        
+
         if (audioTrack !== null) {
           logger.info(`Audio track: ${audioTrack}`);
         } else {
-          logger.info('Audio track: Auto-detect Spanish Latino');
+          logger.info('Audio track: Japanese (Default)');
         }
         logger.info(`Format: ${format.toUpperCase()}`);
         logger.info(`Bitrate: ${bitrate}`);
@@ -326,7 +272,7 @@ audioCommand
 
         logger.info('Extracting audio...');
         const results = await audioService.extractAllAudio(audioTrack, folderPath, format);
-        
+
         const successful = results.filter(r => r.success).length;
         const failed = results.filter(r => !r.success).length;
 

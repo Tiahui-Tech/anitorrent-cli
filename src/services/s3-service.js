@@ -27,7 +27,7 @@ class S3Service {
             };
 
             if (!silent) {
-                console.log(`Uploading ${fileName} to R2...`);
+                console.log(`Uploading ${fileName} to S3...`);
             }
             const uploadResult = await this.s3.upload(params).promise();
             const publicUrl = this.getPublicUrl(fileName);
@@ -52,7 +52,7 @@ class S3Service {
             const data = await this.s3.getObject(params).promise();
             return data.Body;
         } catch (error) {
-            throw new Error(`Error getting file from R2: ${error.message}`);
+            throw new Error(`Error getting file from S3: ${error.message}`);
         }
     }
 

@@ -88,7 +88,7 @@ peertubeCommand
 
         if (waitForCompletion && videoId) {
           logger.separator();
-          logger.step('⏳', 'Waiting for PeerTube to import from R2');
+          logger.step('⏳', 'Waiting for PeerTube to import from S3');
           
           const processingSpinner = ora('Monitoring processing status...').start();
           const processingResult = await peertubeService.waitForProcessing(videoId, maxWaitMinutes);

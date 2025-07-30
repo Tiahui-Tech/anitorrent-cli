@@ -36,12 +36,25 @@ class TorrentService {
     if (!this.client) {
       const { default: WebTorrent } = await import('webtorrent');
       
+      // More aggressive limits for Windows ENOBUFS issue
       let clientOptions = {
-        dht: true,
+        dht: false, // Disable DHT to reduce connections
         tracker: true,
-        lsd: true,
+        lsd: false, // Disable LSD to reduce connections
         natUpnp: false,
-        natPmp: false
+        natPmp: false,
+        // Very conservative connection limits for Windows
+        maxConns: 20,
+        // Disable UTP which causes ENOBUFS on Windows
+        utp: false,
+        // Only use TCP connections
+        tcp: true,
+        // Reduce DHT connections
+        dhtPort: 0,
+        // Shorter connection timeout
+        timeout: 15000,
+        // Limit peer connections per torrent
+        maxConnections: 10
       };
       
       if (this.torrentPort) {
@@ -57,10 +70,16 @@ class TorrentService {
       this.client.on('error', (error) => {
         if (error.code === 'EADDRINUSE') {
           this.logger.verbose(`Port ${error.port || 'default'} is in use, WebTorrent will try another port`);
+        } else if (error.code === 'ENOBUFS') {
+          this.logger.warning('Network buffer space exhausted - destroying client and recreating...');
+          this.forceClientRecreation();
         } else {
           this.logger.verbose(`WebTorrent client error: ${error.message}`);
         }
       });
+      
+      // Set up periodic cleanup
+      this.setupPeriodicCleanup();
     }
   }
 
@@ -425,6 +444,81 @@ class TorrentService {
     }
   }
 
+  async forceClientRecreation() {
+    this.logger.warning('🔄 Force recreating WebTorrent client due to ENOBUFS...');
+    
+    // Clear existing client
+    if (this.client) {
+      try {
+        this.client.destroy();
+      } catch (error) {
+        this.logger.verbose(`Error destroying client: ${error.message}`);
+      }
+      this.client = null;
+    }
+    
+    // Clear cleanup interval
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
+    
+    // Wait a bit before recreating
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    
+    // Recreate client with even more conservative settings
+    try {
+      await this.initializeClient();
+      this.logger.info('✅ WebTorrent client recreated successfully');
+    } catch (error) {
+      this.logger.error(`Failed to recreate client: ${error.message}`);
+    }
+  }
+
+  setupPeriodicCleanup() {
+    // More frequent cleanup (every 2 minutes) to prevent buildup
+    this.cleanupInterval = setInterval(() => {
+      if (this.client) {
+        try {
+          // Force garbage collection on client if available
+          if (global.gc) {
+            global.gc();
+          }
+          
+          // Clean up completed torrents to free resources
+          const completedTorrents = this.client.torrents.filter(torrent => {
+            return torrent.progress === 1 && !this.seedingTorrents.some(s => s.hash === torrent.infoHash);
+          });
+          
+          completedTorrents.forEach(torrent => {
+            this.logger.verbose(`Removing completed non-seeding torrent: ${torrent.infoHash}`);
+            this.safeRemoveTorrent(torrent.infoHash);
+          });
+          
+          // Clean up old/stale torrents that might be consuming resources
+          const staleTorrents = this.client.torrents.filter(torrent => {
+            const isStale = torrent.progress === 0 && torrent.numPeers === 0 && 
+                           (Date.now() - torrent.created) > 180000; // 3 minutes (reduced from 5)
+            return isStale;
+          });
+          
+          staleTorrents.forEach(torrent => {
+            this.logger.verbose(`Removing stale torrent: ${torrent.infoHash}`);
+            this.safeRemoveTorrent(torrent.infoHash);
+          });
+          
+          // Log current connection status
+          if (this.client.torrents.length > 0) {
+            this.logger.verbose(`Active torrents: ${this.client.torrents.length}`);
+          }
+          
+        } catch (error) {
+          this.logger.verbose(`Periodic cleanup error: ${error.message}`);
+        }
+      }
+    }, 120000); // 2 minutes
+  }
+
   formatBytes(bytes) {
     if (bytes === 0) return '0 Bytes';
     const k = 1024;
@@ -434,6 +528,12 @@ class TorrentService {
   }
 
   async destroy(cleanupFiles = false) {
+    // Clear periodic cleanup interval
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
+    
     if (cleanupFiles) {
       for (const seedingInfo of this.seedingTorrents) {
         if (seedingInfo.filePath) {
@@ -457,6 +557,7 @@ class TorrentService {
         this.client = null;
       }
     }
+    
     this.seedingTorrents = [];
   }
 

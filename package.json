@@ -1,7 +1,7 @@
 {
   "name": "@tiahui/anitorrent-cli",
-  "version": "1.1.8",
-  "description": "CLI tool for video management with PeerTube and Cloudflare R2",
+  "version": "1.1.10",
+  "description": "CLI tool for video management with PeerTube and Storj S3",
   "main": "src/index.js",
   "bin": {
     "anitlan": "./bin/anitlan.js"
@@ -54,6 +54,6 @@
     "inquirer": "^8.2.6",
     "ora": "^5.4.1",
     "validator": "^13.9.0",
-    "webtorrent": "^2.5.6"
+    "webtorrent": "^2.6.10"
   }
 }

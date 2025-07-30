@@ -12,7 +12,7 @@ const TorrentService = require('../services/torrent-service');
 const rssCommand = new Command('rss');
 rssCommand.description('RSS feed operations');
 
-const toshoUrl = 'https://feed.animetosho.org/json?qx=1&q=%22[Erai-raws]%20%22%221080p%22!(%22REPACK%22|%22v2%22|%22(ita)%22|%22~%22)'
+const toshoUrl = 'https://feed.animetosho.org/json?qx=1&q=%22[Erai-raws]%20%22%221080p%22!(%22REPACK%22|%22v2%22|%22(ita)%22|%22~%22|%22BATCH%22)'
 
 const fetchWithRetry = async (url, retries = 3) => {
   const https = require('https');
@@ -410,6 +410,8 @@ rssCommand
   .option('--single-run', 'run once instead of continuously')
   .option('--kill-existing', 'kill existing torrent processes before starting')
   .option('--clean-downloads', 'clean existing files from download directory before starting')
+  .option('--memory-cleanup', 'force garbage collection and memory cleanup between episodes')
+  .option('--no-seeding', 'disable seeding to reduce network connections (recommended for ENOBUFS issues)')
   .action(async (options) => {
     const logger = new Logger({ 
       verbose: options.debug || false,
@@ -472,6 +474,12 @@ rssCommand
         logger.info(`Subtitle track: ${subtitleTrack}`);
       } else {
         logger.info('Subtitle track: Auto-detect Spanish Latino');
+      }
+      
+      if (options.noSeeding) {
+        logger.info('🚫 Seeding: Disabled (recommended for ENOBUFS issues)');
+      } else {
+        logger.info('🌱 Seeding: Enabled');
       }
       
       if (options.dryRun) {
@@ -601,7 +609,7 @@ rssCommand
               const downloadResult = await uploadService.downloadFromTorrent(
                 episode.torrent_url, 
                 logger, 
-                { keepSeeding: true }
+                { keepSeeding: !options.noSeeding }
               );
               
               fileInfo = downloadResult.fileInfo;
@@ -629,6 +637,26 @@ rssCommand
               logger.info(`Embed URL: ${result.video.url.replace('/w/', '/videos/embed/')}`);
               
               successCount++;
+              
+              // Memory cleanup between episodes if requested
+              if (options.memoryCleanup) {
+                logger.verbose('🧹 Performing memory cleanup...');
+                
+                // Force garbage collection if available
+                if (global.gc) {
+                  global.gc();
+                  logger.verbose('✅ Garbage collection completed');
+                } else {
+                  logger.verbose('⚠️  Garbage collection not available (run with --expose-gc)');
+                }
+                
+                // Clean up any temporary variables
+                fileInfo = null;
+                torrentService = null;
+                
+                // Small delay to allow cleanup
+                await new Promise(resolve => setTimeout(resolve, 1000));
+              }
               
             } catch (error) {
               logger.error(`❌ Episode ${i + 1} failed: ${error.message}`);

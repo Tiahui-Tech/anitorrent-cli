@@ -91,7 +91,7 @@ uploadCommand.description('File upload operations');
 
 uploadCommand
   .command('r2')
-  .description('Upload file to Cloudflare R2')
+  .description('Upload file to S3')
   .argument('<file>', 'file to upload (supports absolute and relative paths)')
   .option('--name <name>', 'custom name for uploaded file')
   .option('--timestamp', 'add timestamp to filename')
@@ -194,6 +194,7 @@ uploadCommand
     '--track <number>',
     'subtitle track number for extraction (if not specified, auto-finds Spanish Latino)'
   )
+  .option('--audio', 'extract and upload all audio tracks to R2')
   .action(async (file, options) => {
     const isLogs = uploadCommand.parent?.opts()?.logs || false;
     const logger = new Logger({
@@ -392,6 +393,9 @@ uploadCommand
       if (animeId) {
         logger.info(`Anime ID: ${animeId}`);
       }
+      if (options.audio) {
+        logger.info('Audio extraction: Enabled (all tracks to audios/ folder)');
+      }
       logger.separator();
 
       const results = [];
@@ -417,6 +421,7 @@ uploadCommand
             keepR2File,
             animeId,
             subtitleTrack,
+            extractAudio: options.audio,
             customName:
               options.name && filesToProcess.length === 1 ? options.name : null,
             timestamp: options.timestamp,

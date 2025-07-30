@@ -243,37 +243,50 @@ class AudioService {
         });
     }
 
-    getLanguageSuffix(track, isSingleSpanish = false) {
+    getLanguageSuffix(track, allTracks = []) {
         const language = track.language;
-        const detail = track.languageDetail;
+        const detail = track.languageDetail || '';
         
-        if (language === 'spa' || language === 'es') {
-            if (isSingleSpanish) {
+        // Japanese is the default with no suffix
+        if (language === 'jpn' || language === 'ja') {
+            return null; // No suffix for Japanese
+        }
+        // For Spanish, use specific suffixes
+        else if (language === 'spa' || language === 'es') {
+            // If there's explicit detail about Latino or es-419, use 'lat' suffix
+            if (detail.includes('Latino') || detail.includes('es-419')) {
                 return 'lat';
-            } else if (detail && detail.includes('Latino')) {
-                return 'lat';
-            } else if (detail && detail.includes('España')) {
-                return 'spa';
-            } else {
-                return track.trackNumber === 0 ? 'spa' : 'lat';
             }
-        } else if (language === 'eng' || language === 'en') {
-            return 'en';
-        } else if (language === 'por' || language === 'pt') {
-            return 'pt';
-        } else if (language === 'jpn' || language === 'ja') {
-            return 'ja';
-        } else if (language === 'fra' || language === 'fr') {
-            return 'fr';
-        } else if (language === 'deu' || language === 'de') {
-            return 'de';
-        } else if (language === 'ita' || language === 'it') {
-            return 'it';
-        } else {
-            return language !== 'unknown' ? language : 'unk';
+            // If there's explicit detail about España or es-ES, use 'spa' suffix
+            else if (detail.includes('España') || detail.includes('es-ES')) {
+                return 'spa';
+            }
+            // Multiple Spanish tracks - use track order to decide
+            else {
+                const spanishTracks = allTracks.filter(t => t.language === 'spa' || t.language === 'es');
+                if (spanishTracks.length === 1) {
+                    return 'lat'; // Single Spanish track is Latino
+                }
+                return track.trackNumber === 0 ? 'spa' : 'lat'; // First is España, others are Latino
+            }
+        }
+        // For other languages, use the 3-letter language code
+        else {
+            return language !== 'unknown' && language !== 'und' ? language : 'unk';
         }
     }
 
+    findDefaultJapaneseTrack(tracks) {
+        const japaneseTracks = tracks.filter(t => t.language === 'jpn' || t.language === 'ja');
+        
+        if (japaneseTracks.length === 0) {
+            return -1; // No Japanese tracks found
+        }
+        
+        // Return the first Japanese track found
+        return japaneseTracks[0].trackNumber;
+    }
+    
     findDefaultSpanishTrack(tracks) {
         const spanishTracks = tracks.filter(t => t.language === 'spa' || t.language === 'es');
         
@@ -386,7 +399,7 @@ class AudioService {
                 const langCode = track.language || 'und';
                 const trackName = track.title || '';
                 
-                const langSuffix = this.getLanguageSuffix(track, spanishTracks.length === 1);
+                const langSuffix = this.getLanguageSuffix(track, audioTracks);
                 let displayName = langSuffix;
                 
                 let baseName = displayName;
@@ -492,7 +505,7 @@ class AudioService {
             let targetTrack = audioTrack;
             
             if (targetTrack === null) {
-                targetTrack = this.findDefaultSpanishTrack(tracks);
+                targetTrack = this.findDefaultJapaneseTrack(tracks);
                 if (targetTrack === -1) {
                     targetTrack = 0;
                 }
@@ -514,7 +527,7 @@ class AudioService {
                 outputFile = `${nameWithoutExt}_lat.${format}`;
             } else if (targetTrack < tracks.length) {
                 const track = tracks[targetTrack];
-                const langSuffix = this.getLanguageSuffix(track);
+                const langSuffix = this.getLanguageSuffix(track, tracks);
                 outputFile = langSuffix ? `${nameWithoutExt}_${langSuffix}.${format}` : `${nameWithoutExt}.${format}`;
             } else {
                 outputFile = `${nameWithoutExt}.${format}`;
@@ -545,7 +558,7 @@ class AudioService {
         const spanishTracks = audioTracks.filter(t => t.language === 'spa' || t.language === 'es');
         
         for (const track of audioTracks) {
-            const langSuffix = this.getLanguageSuffix(track, spanishTracks.length === 1);
+            const langSuffix = this.getLanguageSuffix(track, audioTracks);
             const outputFile = langSuffix ? `${nameWithoutExt}_${langSuffix}.${format}` : `${nameWithoutExt}.${format}`;
             
             const result = await this.extractAudio(videoFile, outputFile, track.trackNumber, directory, format);
