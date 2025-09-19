@@ -1,6 +1,6 @@
 {
   "name": "@tiahui/anitorrent-cli",
-  "version": "1.1.10",
+  "version": "1.1.11",
   "description": "CLI tool for video management with PeerTube and Storj S3",
   "main": "src/index.js",
   "bin": {
@@ -50,9 +50,11 @@
     "aws-sdk": "^2.1692.0",
     "chalk": "^4.1.2",
     "check-disk-space": "^3.4.0",
+    "cli-table3": "^0.6.3",
     "commander": "^11.0.0",
     "inquirer": "^8.2.6",
     "ora": "^5.4.1",
+    "pg": "^8.11.3",
     "validator": "^13.9.0",
     "webtorrent": "^2.6.10"
   }

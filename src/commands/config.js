@@ -240,6 +240,74 @@ configCommand
 
       const apiKeysAnswers = await inquirer.prompt(apiKeysQuestions);
 
+      const databaseQuestions = [
+        {
+          type: 'input',
+          name: 'DB_HOST',
+          message: 'Database Host (optional):',
+          validate: input => {
+            if (!input.trim()) return true;
+            return input.trim().length > 0 || 'Host cannot be empty if provided';
+          },
+          when: () => needsValue('DB_HOST', ['your_db_host'])
+        },
+        {
+          type: 'input',
+          name: 'DB_PORT',
+          message: 'Database Port (optional):',
+          default: '5432',
+          validate: input => {
+            if (!input.trim()) return true;
+            const port = parseInt(input);
+            return (port > 0 && port <= 65535) || 'Port must be between 1 and 65535';
+          },
+          when: () => needsValue('DB_PORT', ['5432']) && !config.get('DB_PORT')
+        },
+        {
+          type: 'input',
+          name: 'DB_NAME',
+          message: 'Database Name (optional):',
+          validate: input => {
+            if (!input.trim()) return true;
+            return input.trim().length > 0 || 'Database name cannot be empty if provided';
+          },
+          when: () => needsValue('DB_NAME', ['your_db_name'])
+        },
+        {
+          type: 'input',
+          name: 'DB_USER',
+          message: 'Database User (optional):',
+          validate: input => {
+            if (!input.trim()) return true;
+            return input.trim().length > 0 || 'Database user cannot be empty if provided';
+          },
+          when: () => needsValue('DB_USER', ['your_db_user'])
+        },
+        {
+          type: 'input',
+          name: 'DB_PASSWORD',
+          message: 'Database Password (optional):',
+          validate: input => {
+            if (!input.trim()) return true;
+            return input.trim().length > 0 || 'Database password cannot be empty if provided';
+          },
+          when: () => needsValue('DB_PASSWORD', ['your_db_password'])
+        },
+        {
+          type: 'confirm',
+          name: 'DB_SSL',
+          message: 'Use SSL for database connection?',
+          default: false,
+          when: () => needsValue('DB_SSL', ['false']) && !config.get('DB_SSL')
+        }
+      ];
+
+      const databaseAnswers = await inquirer.prompt(databaseQuestions);
+      
+      if (databaseAnswers.DB_SSL !== undefined) {
+        databaseAnswers.DB_SSL = databaseAnswers.DB_SSL.toString();
+      }
+
       const finalQuestions = [
         {
           type: 'list',
@@ -266,13 +334,13 @@ configCommand
 
       const finalAnswers = await inquirer.prompt(finalQuestions);
 
-      Object.entries({...channelAnswer, ...apiKeysAnswers, ...finalAnswers}).forEach(([key, value]) => {
+      Object.entries({...channelAnswer, ...apiKeysAnswers, ...databaseAnswers, ...finalAnswers}).forEach(([key, value]) => {
         config.set(key, value);
       });
 
       await config.saveConfig();
       
-      const allAnswers = {...r2Answers, ...peertubeBaseAnswers, ...peertubeCredentials, ...channelAnswer, ...apiKeysAnswers, ...finalAnswers};
+      const allAnswers = {...r2Answers, ...peertubeBaseAnswers, ...peertubeCredentials, ...channelAnswer, ...apiKeysAnswers, ...databaseAnswers, ...finalAnswers};
       const configuredKeys = Object.keys(allAnswers);
       
       logger.success('Configuration saved successfully');
@@ -361,7 +429,7 @@ configCommand
       
       const configData = config.showConfig(true);
       Object.entries(configData)
-        .filter(([key]) => key.startsWith('R2_') || key.startsWith('PEERTUBE_') || key.startsWith('DEFAULT_') || key.startsWith('CLAUDE_') || key.startsWith('ANITORRENT_'))
+        .filter(([key]) => key.startsWith('R2_') || key.startsWith('PEERTUBE_') || key.startsWith('DEFAULT_') || key.startsWith('CLAUDE_') || key.startsWith('ANITORRENT_') || key.startsWith('DB_'))
         .forEach(([key, value]) => {
           logger.info(`${key}: ${value}`, 1);
         });
@@ -458,6 +526,28 @@ configCommand
         }
       } else {
         logger.info('AniTorrent API key not configured');
+      }
+
+      const dbConfig = config.getDatabaseConfig();
+      if (dbConfig.host && dbConfig.host !== 'your_db_host') {
+        const dbSpinner = ora('Testing database connection...').start();
+        try {
+          const PostgreSQLService = require('../services/postgresql-service');
+          const dbService = new PostgreSQLService(dbConfig);
+          const testResult = await dbService.testConnection();
+          
+          if (testResult.success) {
+            dbSpinner.succeed('Database connection successful');
+          } else {
+            dbSpinner.fail(`Database connection failed: ${testResult.message}`);
+          }
+          
+          await dbService.close();
+        } catch (error) {
+          dbSpinner.fail(`Database test failed: ${error.message}`);
+        }
+      } else {
+        logger.info('Database not configured');
       }
       
     } catch (error) {

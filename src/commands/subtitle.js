@@ -138,6 +138,10 @@ subtitlesCommand
     '--track <number>',
     'subtitle track number (if not specified, auto-finds Spanish Latino)'
   )
+  .option(
+    '--subtitle-suffix <suffix>',
+    'custom suffix for the extracted subtitle file (can only be used with --track)'
+  )
   .option('--all', 'extract all subtitle tracks')
   .option('--translate', 'also create AI-translated version to Spanish')
   .option(
@@ -241,6 +245,16 @@ subtitlesCommand
           logger.error('Invalid subtitle track number');
           process.exit(1);
         }
+      }
+
+      if (options.subtitleSuffix && options.track === undefined) {
+        logger.error('--subtitle-suffix can only be used with --track option');
+        process.exit(1);
+      }
+
+      if (options.subtitleSuffix && options.all) {
+        logger.error('--subtitle-suffix cannot be used with --all option');
+        process.exit(1);
       }
 
       const subtitleService = new SubtitleService();
@@ -423,6 +437,9 @@ subtitlesCommand
 
           if (subtitleTrack !== null) {
             logger.info(`Track: ${subtitleTrack}`);
+            if (options.subtitleSuffix) {
+              logger.info(`Subtitle suffix: ${options.subtitleSuffix}`);
+            }
           } else {
             logger.info('Track: Auto-detect Spanish Latino');
           }
@@ -457,9 +474,11 @@ subtitlesCommand
           let outputFile;
           if (targetTrack < tracks.length) {
             const track = tracks[targetTrack];
+            logger.info(`Track: ${JSON.stringify(track)}`);
             const langSuffix = subtitleService.getLanguageSuffix(
               track,
-              spanishTracks.length === 1
+              spanishTracks.length === 1,
+              options.subtitleSuffix
             );
             outputFile = langSuffix
               ? `${nameWithoutExt}_${langSuffix}.ass`
@@ -1106,6 +1125,7 @@ subtitlesCommand
         }
       }
     } catch (error) {
+      console.log(error);
       logger.error(`Subtitle extraction failed: ${error.message}`);
       process.exit(1);
     }

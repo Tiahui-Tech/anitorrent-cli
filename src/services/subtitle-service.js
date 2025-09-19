@@ -1,14 +1,14 @@
-const anitomy = require('anitomyscript');
-const fs = require('fs').promises;
-const path = require('path');
-const { exec } = require('child_process');
-const { promisify } = require('util');
+const anitomy = require("anitomyscript");
+const fs = require("fs").promises;
+const path = require("path");
+const { exec } = require("child_process");
+const { promisify } = require("util");
 
 const execAsync = promisify(exec);
 
 class SubtitleService {
   constructor() {
-    this.subtitlesFolderName = 'subtitles';
+    this.subtitlesFolderName = "subtitles";
   }
 
   async getVideoInfo(videoFile) {
@@ -53,13 +53,13 @@ class SubtitleService {
     const mkvData = await this.getMkvInfo(videoFile);
 
     const tracks = mkvData.tracks || [];
-    const subtitleTracks = tracks.filter((track) => track.type === 'subtitles');
+    const subtitleTracks = tracks.filter((track) => track.type === "subtitles");
 
     return subtitleTracks.map((track, index) => {
       const props = track.properties || {};
-      const langCode = props.language || 'und';
-      const trackName = props.track_name || '';
-      const codec = track.codec || '';
+      const langCode = props.language || "und";
+      const trackName = props.track_name || "";
+      const codec = track.codec || "";
 
       const languageInfo = this.parseMkvLanguageInfo(
         langCode,
@@ -80,7 +80,7 @@ class SubtitleService {
         default: props.default_track === true,
         properties: props,
         originalTrackName: trackName,
-        source: 'mkvmerge',
+        source: "mkvmerge",
       };
     });
   }
@@ -88,7 +88,7 @@ class SubtitleService {
   async listSubtitleTracksWithFfprobe(videoFile) {
     const data = await this.getVideoInfo(videoFile);
     const subtitleStreams = data.streams.filter(
-      (stream) => stream.codec_type === 'subtitle'
+      (stream) => stream.codec_type === "subtitle"
     );
 
     return subtitleStreams.map((stream, index) => {
@@ -107,87 +107,87 @@ class SubtitleService {
         default: stream.disposition?.default === 1,
         disposition: stream.disposition,
         allTags: stream.tags,
-        source: 'ffprobe',
+        source: "ffprobe",
       };
     });
   }
 
   parseMkvLanguageInfo(langCode, trackName, index, allTracks) {
-    const language = langCode || 'unknown';
+    const language = langCode || "unknown";
     const name = trackName.toLowerCase();
 
-    let detail = '';
+    let detail = "";
     let displayTitle = trackName;
 
-    if (language === 'spa' || language === 'es') {
-      if (name.includes('es-419') || name.includes('latin')) {
-        detail = 'Latino (es-419)';
-        displayTitle = displayTitle || 'Español (Latino)';
+    if (language === "spa" || language === "es") {
+      if (name.includes("es-419") || name.includes("latin")) {
+        detail = "Latino (es-419)";
+        displayTitle = displayTitle || "Español (Latino)";
       } else if (
-        name.includes('es-es') ||
-        name.includes('españa') ||
-        name.includes('spain') ||
-        name.includes('castilian')
+        name.includes("es-es") ||
+        name.includes("españa") ||
+        name.includes("spain") ||
+        name.includes("castilian")
       ) {
-        detail = 'España (es-ES)';
-        displayTitle = displayTitle || 'Español (España)';
-      } else if (name.includes('forced')) {
-        detail = 'Forced';
-        displayTitle = displayTitle || 'Español (Forced)';
+        detail = "España (es-ES)";
+        displayTitle = displayTitle || "Español (España)";
+      } else if (name.includes("forced")) {
+        detail = "Forced";
+        displayTitle = displayTitle || "Español (Forced)";
       } else {
         // Smart detection: check if there's already a Latino track
         const spanishTracks = allTracks.filter(
           (t) =>
-            (t.properties?.language === 'spa' ||
-              t.properties?.language === 'es') &&
-            t.type === 'subtitles'
+            (t.properties?.language === "spa" ||
+              t.properties?.language === "es") &&
+            t.type === "subtitles"
         );
 
         const hasLatinoTrack = spanishTracks.some((t) => {
-          const tName = (t.properties?.track_name || '').toLowerCase();
-          return tName.includes('es-419') || tName.includes('latin');
+          const tName = (t.properties?.track_name || "").toLowerCase();
+          return tName.includes("es-419") || tName.includes("latin");
         });
 
         const hasEspañaTrack = spanishTracks.some((t) => {
-          const tName = (t.properties?.track_name || '').toLowerCase();
+          const tName = (t.properties?.track_name || "").toLowerCase();
           return (
-            tName.includes('es-es') ||
-            tName.includes('españa') ||
-            tName.includes('spain') ||
-            tName.includes('castilian')
+            tName.includes("es-es") ||
+            tName.includes("españa") ||
+            tName.includes("spain") ||
+            tName.includes("castilian")
           );
         });
 
         // If there's already a Latino track and this is just "Spanish", assume it's España
-        if (hasLatinoTrack && !hasEspañaTrack && name === 'cr_spanish') {
-          detail = 'España (inferred)';
+        if (hasLatinoTrack && !hasEspañaTrack && name === "cr_spanish") {
+          detail = "España (inferred)";
         } else if (!hasLatinoTrack && !hasEspañaTrack) {
           // If no specific variants, use order
-          detail = index === 0 ? 'España (by order)' : 'Latino (by order)';
+          detail = index === 0 ? "España (by order)" : "Latino (by order)";
         } else {
-          detail = 'Unknown variant';
+          detail = "Unknown variant";
         }
         displayTitle = displayTitle || `Español (${detail})`;
       }
-    } else if (language === 'por' || language === 'pt') {
+    } else if (language === "por" || language === "pt") {
       if (
-        name.includes('pt-br') ||
-        name.includes('brasil') ||
-        name.includes('brazil')
+        name.includes("pt-br") ||
+        name.includes("brasil") ||
+        name.includes("brazil")
       ) {
-        detail = 'Brasil (pt-BR)';
-        displayTitle = displayTitle || 'Português (Brasil)';
+        detail = "Brasil (pt-BR)";
+        displayTitle = displayTitle || "Português (Brasil)";
       } else {
-        detail = 'Portugal';
-        displayTitle = displayTitle || 'Português';
+        detail = "Portugal";
+        displayTitle = displayTitle || "Português";
       }
-    } else if (language === 'eng' || language === 'en') {
-      if (name.includes('en-us') || name.includes('american')) {
-        detail = 'US (en-US)';
-        displayTitle = displayTitle || 'English (US)';
+    } else if (language === "eng" || language === "en") {
+      if (name.includes("en-us") || name.includes("american")) {
+        detail = "US (en-US)";
+        displayTitle = displayTitle || "English (US)";
       } else {
-        detail = 'English';
-        displayTitle = displayTitle || 'English';
+        detail = "English";
+        displayTitle = displayTitle || "English";
       }
     }
 
@@ -200,34 +200,34 @@ class SubtitleService {
 
   parseLanguageInfo(stream, index) {
     const tags = stream.tags || {};
-    const language = tags.language || 'unknown';
-    const title = tags.title || tags.handler_name || '';
+    const language = tags.language || "unknown";
+    const title = tags.title || tags.handler_name || "";
 
-    let detail = '';
+    let detail = "";
     let displayTitle = title;
 
-    if (language === 'spa' || language === 'es') {
+    if (language === "spa" || language === "es") {
       if (
-        title.toLowerCase().includes('latin') ||
-        title.toLowerCase().includes('latino')
+        title.toLowerCase().includes("latin") ||
+        title.toLowerCase().includes("latino")
       ) {
-        detail = 'Latino';
-        displayTitle = displayTitle || 'Español (Latino)';
+        detail = "Latino";
+        displayTitle = displayTitle || "Español (Latino)";
       } else if (
-        title.toLowerCase().includes('spain') ||
-        title.toLowerCase().includes('españa') ||
-        title.toLowerCase().includes('castilian')
+        title.toLowerCase().includes("spain") ||
+        title.toLowerCase().includes("españa") ||
+        title.toLowerCase().includes("castilian")
       ) {
-        detail = 'España';
-        displayTitle = displayTitle || 'Español (España)';
+        detail = "España";
+        displayTitle = displayTitle || "Español (España)";
       } else if (
-        title.toLowerCase().includes('forced') ||
+        title.toLowerCase().includes("forced") ||
         stream.disposition?.forced === 1
       ) {
-        detail = 'Forced';
-        displayTitle = displayTitle || 'Español (Forced)';
+        detail = "Forced";
+        displayTitle = displayTitle || "Español (Forced)";
       } else {
-        detail = index === 0 ? 'España (assumed)' : 'Latino (assumed)';
+        detail = index === 0 ? "España (assumed)" : "Latino (assumed)";
         displayTitle = displayTitle || `Español (${detail})`;
       }
     }
@@ -241,7 +241,7 @@ class SubtitleService {
 
   async fetchPlaylistVideos(
     playlistId,
-    apiUrl = 'https://peertube.anitorrent.com/api/v1'
+    apiUrl = "https://peertube.anitorrent.com/api/v1"
   ) {
     const url = `${apiUrl}/video-playlists/${playlistId}/videos?count=100`;
 
@@ -257,10 +257,10 @@ class SubtitleService {
     }
   }
 
-  async getLocalVideoFiles(directory = '.', recursive = false) {
+  async getLocalVideoFiles(directory = ".", recursive = false) {
     const foundFiles = [];
 
-    async function scanDir(currentDir, relativePath = '') {
+    async function scanDir(currentDir, relativePath = "") {
       try {
         const entries = await fs.readdir(currentDir, { withFileTypes: true });
 
@@ -271,16 +271,16 @@ class SubtitleService {
           if (entry.isFile()) {
             const ext = path.extname(entry.name).toLowerCase();
             const videoExtensions = [
-              '.mp4',
-              '.mkv',
-              '.avi',
-              '.mov',
-              '.wmv',
-              '.flv',
-              '.webm',
-              '.m4v',
-              '.ts',
-              '.mts',
+              ".mp4",
+              ".mkv",
+              ".avi",
+              ".mov",
+              ".wmv",
+              ".flv",
+              ".webm",
+              ".m4v",
+              ".ts",
+              ".mts",
             ];
 
             if (videoExtensions.includes(ext)) {
@@ -303,8 +303,8 @@ class SubtitleService {
     try {
       if (
         !videoName ||
-        typeof videoName !== 'string' ||
-        videoName.trim() === ''
+        typeof videoName !== "string" ||
+        videoName.trim() === ""
       ) {
         return null;
       }
@@ -321,8 +321,8 @@ class SubtitleService {
   normalizeTitle(title) {
     return title
       .toLowerCase()
-      .replace(/[^\w\s]/g, '')
-      .replace(/\s+/g, ' ')
+      .replace(/[^\w\s]/g, "")
+      .replace(/\s+/g, " ")
       .trim();
   }
 
@@ -358,7 +358,7 @@ class SubtitleService {
     return matches;
   }
 
-  async ensureSubtitlesDirectory(directory = '.') {
+  async ensureSubtitlesDirectory(directory = ".") {
     const subtitlesDir = path.join(directory, this.subtitlesFolderName);
     try {
       await fs.access(subtitlesDir);
@@ -372,7 +372,7 @@ class SubtitleService {
     videoFile,
     outputFile,
     subtitleTrack = 0,
-    directory = '.'
+    directory = "."
   ) {
     const subtitlesDir = await this.ensureSubtitlesDirectory(directory);
     const subtitlesPath = path.join(subtitlesDir, outputFile);
@@ -383,7 +383,7 @@ class SubtitleService {
     }
 
     if (
-      typeof subtitleTrack !== 'number' ||
+      typeof subtitleTrack !== "number" ||
       isNaN(subtitleTrack) ||
       subtitleTrack < 0
     ) {
@@ -398,7 +398,7 @@ class SubtitleService {
       if (tracks.length === 0) {
         return {
           success: false,
-          error: 'No subtitle tracks found in video file',
+          error: "No subtitle tracks found in video file",
         };
       }
 
@@ -466,12 +466,12 @@ class SubtitleService {
     if (subtitleTrack === null || subtitleTrack === undefined) {
       return {
         success: false,
-        error: 'Subtitle track cannot be null or undefined',
+        error: "Subtitle track cannot be null or undefined",
       };
     }
 
     if (
-      typeof subtitleTrack !== 'number' ||
+      typeof subtitleTrack !== "number" ||
       isNaN(subtitleTrack) ||
       subtitleTrack < 0
     ) {
@@ -500,7 +500,7 @@ class SubtitleService {
     }
 
     let streamMap;
-    if (track.source === 'ffprobe' && track.streamIndex !== undefined) {
+    if (track.source === "ffprobe" && track.streamIndex !== undefined) {
       streamMap = `0:${track.streamIndex}`;
     } else {
       streamMap = `0:s:${subtitleTrack}`;
@@ -521,7 +521,7 @@ class SubtitleService {
 
   async extractAllLocalSubtitles(
     subtitleTrack = null,
-    directory = '.',
+    directory = ".",
     recursive = false
   ) {
     const localFiles = await this.getLocalVideoFiles(directory, recursive);
@@ -593,7 +593,7 @@ class SubtitleService {
 
   findDefaultSpanishTrack(tracks) {
     const spanishTracks = tracks.filter(
-      (t) => t.language === 'spa' || t.language === 'es'
+      (t) => t.language === "spa" || t.language === "es"
     );
 
     if (spanishTracks.length === 0) {
@@ -610,15 +610,15 @@ class SubtitleService {
 
     // Multiple Spanish tracks - find Latino
     for (const track of spanishTracks) {
-      const detail = track.languageDetail || '';
-      const title = track.title || '';
+      const detail = track.languageDetail || "";
+      const title = track.title || "";
 
       // Look for explicit Latino indicators
       if (
-        detail.includes('Latino') ||
-        detail.includes('es-419') ||
-        title.toLowerCase().includes('latin') ||
-        title.toLowerCase().includes('419')
+        detail.includes("Latino") ||
+        detail.includes("es-419") ||
+        title.toLowerCase().includes("latin") ||
+        title.toLowerCase().includes("419")
       ) {
         const trackNumber = track.trackNumber;
         return trackNumber !== null && trackNumber !== undefined
@@ -629,15 +629,15 @@ class SubtitleService {
 
     // If no explicit Latino found, look for non-España tracks
     for (const track of spanishTracks) {
-      const detail = track.languageDetail || '';
-      const title = track.title || '';
+      const detail = track.languageDetail || "";
+      const title = track.title || "";
 
       // Skip España tracks
       if (
-        detail.includes('España') ||
-        detail.includes('es-ES') ||
-        title.toLowerCase().includes('spain') ||
-        title.toLowerCase().includes('es-es')
+        detail.includes("España") ||
+        detail.includes("es-ES") ||
+        title.toLowerCase().includes("spain") ||
+        title.toLowerCase().includes("es-es")
       ) {
         continue;
       }
@@ -654,13 +654,13 @@ class SubtitleService {
     return trackNumber !== null && trackNumber !== undefined ? trackNumber : 0;
   }
 
-  async extractAllSubtitleTracks(videoFile, directory = '.') {
+  async extractAllSubtitleTracks(videoFile, directory = ".") {
     const tracks = await this.listSubtitleTracks(videoFile);
 
     const nameWithoutExt = path.parse(videoFile).name;
 
     if (tracks.length === 0) {
-      throw new Error('No subtitle tracks found in the video file');
+      throw new Error("No subtitle tracks found in the video file");
     }
 
     const results = [];
@@ -688,7 +688,7 @@ class SubtitleService {
     return results;
   }
 
-  async extractAllSubtitlesFromFolder(directory = '.', recursive = false) {
+  async extractAllSubtitlesFromFolder(directory = ".", recursive = false) {
     const localFiles = await this.getLocalVideoFiles(directory, recursive);
 
     if (localFiles.length === 0) {
@@ -720,60 +720,36 @@ class SubtitleService {
     return results;
   }
 
-  getLanguageSuffix(track, allTracks) {
-    const language = track.language;
-    const detail = track.languageDetail || '';
-    const title = track.title || '';
+  getLanguageSuffix(track, tracks = null, customSuffix = null) {
+    if (customSuffix) {
+      return customSuffix;
+    }
 
-    if (language === 'spa' || language === 'es') {
+    const language = track.language;
+    const detail = track.languageDetail || "";
+    const title = track.title || "";
+
+    if (language === "spa" || language === "es") {
       if (
-        detail.toLowerCase().includes('latin') ||
-        detail.toLowerCase().includes('es-419') ||
-        title.toLowerCase().includes('latin') ||
-        title.toLowerCase().includes('419')
+        detail.toLowerCase().includes("latin") ||
+        detail.toLowerCase().includes("es-419") ||
+        title.toLowerCase().includes("latin") ||
+        title.toLowerCase().includes("419")
       ) {
         return null;
+      } else {
+        return "spa";
       }
-      else if (
-        detail.toLowerCase().includes('españa') ||
-        detail.toLowerCase().includes('es-es') ||
-        detail.toLowerCase().includes('spain') ||
-        title.toLowerCase().includes('spain') ||
-        detail.toLowerCase().includes('castilian')
-      ) {
-        return 'spa';
-      }
-      else {
-        const spanishTracks = allTracks.filter(
-          (t) => t.language === 'spa' || t.language === 'es'
-        );
-        
-        if (spanishTracks.length === 1) {
-          return null;
-        }
-        
-        if (detail.toLowerCase().includes('unknown')) {
-          if (
-            title.toLowerCase().includes('spanish') && 
-            !title.toLowerCase().includes('latin')
-          ) {
-            return 'spa';
-          }
-        }
-        
-        return track.trackNumber === 0 ? 'spa' : null;
-      }
-    }
-    else {
-      return language !== 'unknown' && language !== 'und' ? language : 'unk';
+    } else {
+      return language !== "unknown" && language !== "und" ? language : "unk";
     }
   }
 
   async extractFromPlaylist(
     playlistId,
     subtitleTrack = 0,
-    apiUrl = 'https://peertube.anitorrent.com/api/v1',
-    directory = '.',
+    apiUrl = "https://peertube.anitorrent.com/api/v1",
+    directory = ".",
     offsetMs = 0,
     recursive = false
   ) {
@@ -803,7 +779,7 @@ class SubtitleService {
 
     if (matches.length === 0) {
       throw new Error(
-        'No matches found between PeerTube playlist and local files'
+        "No matches found between PeerTube playlist and local files"
       );
     }
 
@@ -838,7 +814,7 @@ class SubtitleService {
   }
 
   async translateSubtitleFile(subtitlePath, config, onProgress = null) {
-    const TranslationService = require('./translation-service');
+    const TranslationService = require("./translation-service");
 
     try {
       const translationService = new TranslationService(config);
@@ -856,7 +832,7 @@ class SubtitleService {
     videoFile,
     outputFile,
     subtitleTrack = 0,
-    directory = '.',
+    directory = ".",
     translationConfig = null,
     onProgress = null
   ) {
@@ -878,7 +854,7 @@ class SubtitleService {
     try {
       if (onProgress) {
         onProgress({
-          type: 'translation_start',
+          type: "translation_start",
           file: extractResult.outputPath,
         });
       }
@@ -891,7 +867,7 @@ class SubtitleService {
 
       if (onProgress) {
         onProgress({
-          type: 'translation_complete',
+          type: "translation_complete",
           originalFile: extractResult.outputPath,
           translatedFile: translationResult.outputPath,
         });
@@ -903,7 +879,7 @@ class SubtitleService {
       };
     } catch (error) {
       if (onProgress) {
-        onProgress({ type: 'translation_error', error: error.message });
+        onProgress({ type: "translation_error", error: error.message });
       }
 
       return {
@@ -915,7 +891,7 @@ class SubtitleService {
 
   async extractAllLocalSubtitlesWithTranslation(
     subtitleTrack = null,
-    directory = '.',
+    directory = ".",
     translationConfig = null,
     onProgress = null,
     recursive = false
@@ -951,7 +927,7 @@ class SubtitleService {
       try {
         const tracks = await this.listSubtitleTracks(filePath);
         const spanishTracks = tracks.filter(
-          (t) => t.language === 'spa' || t.language === 'es'
+          (t) => t.language === "spa" || t.language === "es"
         );
 
         if (targetTrack >= tracks.length) {
@@ -1004,7 +980,7 @@ class SubtitleService {
 
   async extractAllSubtitleTracksWithTranslation(
     videoFile,
-    directory = '.',
+    directory = ".",
     translationConfig = null,
     onProgress = null
   ) {
@@ -1012,12 +988,12 @@ class SubtitleService {
     const nameWithoutExt = path.parse(videoFile).name;
 
     if (tracks.length === 0) {
-      throw new Error('No subtitle tracks found in the video file');
+      throw new Error("No subtitle tracks found in the video file");
     }
 
     const results = [];
     const spanishTracks = tracks.filter(
-      (t) => t.language === 'spa' || t.language === 'es'
+      (t) => t.language === "spa" || t.language === "es"
     );
 
     for (const track of tracks) {
@@ -1046,11 +1022,11 @@ class SubtitleService {
   }
 
   async adjustSubtitleTiming(subtitleFile, offsetMs, outputFile = null) {
-    const fs = require('fs').promises;
-    const path = require('path');
+    const fs = require("fs").promises;
+    const path = require("path");
 
     try {
-      const content = await fs.readFile(subtitleFile, 'utf8');
+      const content = await fs.readFile(subtitleFile, "utf8");
 
       if (!outputFile) {
         const parsed = path.parse(subtitleFile);
@@ -1063,7 +1039,7 @@ class SubtitleService {
 
       const adjustedContent = this.adjustAssTimings(content, offsetMs);
 
-      await fs.writeFile(outputFile, adjustedContent, 'utf8');
+      await fs.writeFile(outputFile, adjustedContent, "utf8");
 
       return {
         success: true,
@@ -1084,10 +1060,10 @@ class SubtitleService {
   }
 
   adjustAssTimings(content, offsetMs) {
-    const lines = content.split('\n');
+    const lines = content.split("\n");
     const adjustedLines = lines.map((line) => {
-      if (line.startsWith('Dialogue:') || line.startsWith('Comment:')) {
-        const parts = line.split(',');
+      if (line.startsWith("Dialogue:") || line.startsWith("Comment:")) {
+        const parts = line.split(",");
         if (parts.length >= 10) {
           const startTime = parts[1];
           const endTime = parts[2];
@@ -1098,13 +1074,13 @@ class SubtitleService {
           parts[1] = adjustedStartTime;
           parts[2] = adjustedEndTime;
 
-          return parts.join(',');
+          return parts.join(",");
         }
       }
       return line;
     });
 
-    return adjustedLines.join('\n');
+    return adjustedLines.join("\n");
   }
 
   adjustAssTime(timeStr, offsetMs) {
@@ -1127,9 +1103,9 @@ class SubtitleService {
     const newSeconds = Math.floor((adjustedMs % 60000) / 1000);
     const newCentiseconds = Math.floor((adjustedMs % 1000) / 10);
 
-    return `${newHours}:${newMinutes.toString().padStart(2, '0')}:${newSeconds
+    return `${newHours}:${newMinutes.toString().padStart(2, "0")}:${newSeconds
       .toString()
-      .padStart(2, '0')}.${newCentiseconds.toString().padStart(2, '0')}`;
+      .padStart(2, "0")}.${newCentiseconds.toString().padStart(2, "0")}`;
   }
 }
 

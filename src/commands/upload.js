@@ -171,10 +171,10 @@ uploadCommand
 
 uploadCommand
   .command('auto')
-  .description('Upload to R2 and automatically import to PeerTube')
+  .description('Upload to R2 and automatically import to PeerTube (supports local files, direct video URLs, and torrent downloads)')
   .argument(
     '[file]',
-    'file to upload (supports absolute and relative paths) or torrent URL/magnet when using --torrent. If not specified, uploads all video files from current directory'
+    'file to upload (supports absolute and relative paths), video URL (direct link to video file), or torrent URL/magnet when using --torrent. If not specified, uploads all video files from current directory'
   )
   .option('--torrent', 'download file from torrent URL or magnet link')
   .option(
@@ -194,7 +194,26 @@ uploadCommand
     '--track <number>',
     'subtitle track number for extraction (if not specified, auto-finds Spanish Latino)'
   )
+  .option(
+    '--subtitle-suffix <suffix>',
+    'custom suffix for the extracted subtitle file (can only be used with --track)'
+  )
   .option('--audio', 'extract and upload all audio tracks to R2')
+  .option(
+    '--audio-track <number>',
+    'audio track number for extraction (if not specified, extracts all tracks)'
+  )
+  .option(
+    '--audio-suffix <suffix>',
+    'custom suffix for the extracted audio file (can only be used with --audio-track)'
+  )
+  .option(
+    '--audio-latino-track <number>',
+    'specify which audio track is Spanish Latino (requires --audio, automatically assumes other "spa" tracks are Spanish Spain)'
+  )
+  .option('--ignore-subtitle-tracks <tracks>', 'comma-separated list of subtitle track indexes to ignore (e.g., 0,3,4)')
+  .option('--ignore-audio-tracks <tracks>', 'comma-separated list of audio track indexes to ignore (e.g., 0,3,4)')
+  .option('--local-file <filename>', 'local filename for subtitle/audio extraction when using URL (required when URL is used and extraction is needed)')
   .action(async (file, options) => {
     const isLogs = uploadCommand.parent?.opts()?.logs || false;
     const logger = new Logger({
@@ -313,31 +332,73 @@ uploadCommand
           process.exit(1);
         }
       } else {
-        const fileValidation = await Validators.validateFilePath(file);
+        const fileValidation = await Validators.validateFileOrUrl(file);
 
-        if (!fileValidation.exists) {
-          logger.error(`File not found: "${fileValidation.originalPath}"`);
-          if (fileValidation.originalPath !== fileValidation.resolvedPath) {
-            logger.error(`Resolved path: "${fileValidation.resolvedPath}"`);
+        if (fileValidation.isUrl) {
+          if (!options.localFile) {
+            logger.error('--local-file is required when using direct URL video');
+            process.exit(1);
           }
-          process.exit(1);
-        }
 
-        if (!Validators.isValidVideoFile(fileValidation.resolvedPath)) {
-          logger.warning('File does not appear to be a video file');
-        }
+          let localFileValidation = null;
+          if (options.localFile) {
+            localFileValidation = await Validators.validateFilePath(options.localFile);
+            if (!localFileValidation.exists) {En
+              logger.error(`Local file not found: "${localFileValidation.originalPath}"`);
+              if (localFileValidation.originalPath !== localFileValidation.resolvedPath) {
+                logger.error(`Resolved path: "${localFileValidation.resolvedPath}"`);
+              }
+              process.exit(1);
+            }
 
-        filesToProcess = [
-          {
-            originalPath: fileValidation.originalPath,
-            resolvedPath: fileValidation.resolvedPath,
-            fileName: path.basename(fileValidation.resolvedPath),
-            downloadedFromTorrent: false,
-          },
-        ];
+            if (!Validators.isValidVideoFile(localFileValidation.resolvedPath)) {
+              logger.warning('Local file does not appear to be a video file');
+            }
+          }
 
-        if (isLogs) {
-          logger.info(`Using file: ${fileValidation.resolvedPath}`);
+          filesToProcess = [
+            {
+              originalPath: fileValidation.originalPath,
+              resolvedPath: fileValidation.resolvedPath,
+              fileName: fileValidation.fileName,
+              downloadedFromTorrent: false,
+              isUrl: true,
+              localFile: localFileValidation ? localFileValidation.resolvedPath : null,
+            },
+          ];
+
+          if (isLogs) {
+            logger.info(`Using URL: ${fileValidation.resolvedPath}`);
+            if (options.localFile) {
+              logger.info(`Local file for extraction: ${localFileValidation.resolvedPath}`);
+            }
+          }
+        } else {
+          if (!fileValidation.exists) {
+            logger.error(`File not found: "${fileValidation.originalPath}"`);
+            if (fileValidation.originalPath !== fileValidation.resolvedPath) {
+              logger.error(`Resolved path: "${fileValidation.resolvedPath}"`);
+            }
+            process.exit(1);
+          }
+
+          if (!Validators.isValidVideoFile(fileValidation.resolvedPath)) {
+            logger.warning('File does not appear to be a video file');
+          }
+
+          filesToProcess = [
+            {
+              originalPath: fileValidation.originalPath,
+              resolvedPath: fileValidation.resolvedPath,
+              fileName: path.basename(fileValidation.resolvedPath),
+              downloadedFromTorrent: false,
+              isUrl: false,
+            },
+          ];
+
+          if (isLogs) {
+            logger.info(`Using file: ${fileValidation.resolvedPath}`);
+          }
         }
       }
 
@@ -368,6 +429,64 @@ uploadCommand
         }
       }
 
+      if (options.subtitleSuffix && options.track === undefined) {
+        logger.error('--subtitle-suffix can only be used with --track option');
+        process.exit(1);
+      }
+
+      let audioTrack = null;
+      if (options.audioTrack !== undefined) {
+        audioTrack = parseInt(options.audioTrack);
+        if (!Validators.isValidSubtitleTrack(audioTrack)) {
+          logger.error('Invalid audio track number');
+          process.exit(1);
+        }
+      }
+
+      if (options.audioSuffix && options.audioTrack === undefined) {
+        logger.error('--audio-suffix can only be used with --audio-track option');
+        process.exit(1);
+      }
+
+      let ignoredSubtitleTracks = [];
+      if (options.ignoreSubtitleTracks) {
+        try {
+          ignoredSubtitleTracks = options.ignoreSubtitleTracks
+            .split(',')
+            .map(track => parseInt(track.trim()))
+            .filter(track => !isNaN(track) && track >= 0);
+        } catch (error) {
+          logger.error('Invalid format for --ignore-subtitle-tracks. Use comma-separated numbers (e.g., 0,3,4)');
+          process.exit(1);
+        }
+      }
+
+      let ignoredAudioTracks = [];
+      if (options.ignoreAudioTracks) {
+        try {
+          ignoredAudioTracks = options.ignoreAudioTracks
+            .split(',')
+            .map(track => parseInt(track.trim()))
+            .filter(track => !isNaN(track) && track >= 0);
+        } catch (error) {
+          logger.error('Invalid format for --ignore-audio-tracks. Use comma-separated numbers (e.g., 0,3,4)');
+          process.exit(1);
+        }
+      }
+
+      let audioLatinoTrack = null;
+      if (options.audioLatinoTrack !== undefined) {
+        if (!options.audio) {
+          logger.error('--audio-latino-track can only be used with --audio option');
+          process.exit(1);
+        }
+        audioLatinoTrack = parseInt(options.audioLatinoTrack);
+        if (!Validators.isValidSubtitleTrack(audioLatinoTrack)) {
+          logger.error('Invalid audio latino track number');
+          process.exit(1);
+        }
+      }
+
       if (!Validators.isValidChannelId(channelId)) {
         logger.error('Invalid channel ID');
         process.exit(1);
@@ -387,6 +506,9 @@ uploadCommand
       logger.info(`Max wait time: ${maxWaitMinutes} minutes`);
       if (subtitleTrack !== null) {
         logger.info(`Subtitle track: ${subtitleTrack}`);
+        if (options.subtitleSuffix) {
+          logger.info(`Subtitle suffix: ${options.subtitleSuffix}`);
+        }
       } else {
         logger.info('Subtitle track: Auto-detect Spanish Latino');
       }
@@ -395,6 +517,21 @@ uploadCommand
       }
       if (options.audio) {
         logger.info('Audio extraction: Enabled (all tracks to audios/ folder)');
+      }
+      if (audioTrack !== null) {
+        logger.info(`Audio track: ${audioTrack}`);
+        if (options.audioSuffix) {
+          logger.info(`Audio suffix: ${options.audioSuffix}`);
+        }
+      }
+      if (audioLatinoTrack !== null) {
+        logger.info(`Audio Latino track: ${audioLatinoTrack}`);
+      }
+      if (ignoredSubtitleTracks.length > 0) {
+        logger.info(`Ignored subtitle tracks: ${ignoredSubtitleTracks.join(', ')}`);
+      }
+      if (ignoredAudioTracks.length > 0) {
+        logger.info(`Ignored audio tracks: ${ignoredAudioTracks.join(', ')}`);
       }
       logger.separator();
 
@@ -421,7 +558,13 @@ uploadCommand
             keepR2File,
             animeId,
             subtitleTrack,
+            subtitleSuffix: options.subtitleSuffix,
             extractAudio: options.audio,
+            audioTrack,
+            audioSuffix: options.audioSuffix,
+            audioLatinoTrack,
+            ignoredSubtitleTracks,
+            ignoredAudioTracks,
             customName:
               options.name && filesToProcess.length === 1 ? options.name : null,
             timestamp: options.timestamp,

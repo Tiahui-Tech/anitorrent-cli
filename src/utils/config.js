@@ -106,7 +106,13 @@ class ConfigManager {
             DEFAULT_PRIVACY_LEVEL: '5',
             DEFAULT_VIDEO_PASSWORD: 'AniTorrent108',
             CLAUDE_API_KEY: 'your_claude_api_key',
-            ANITORRENT_API_KEY: 'your_anitorrent_api_key'
+            ANITORRENT_API_KEY: 'your_anitorrent_api_key',
+            DB_HOST: 'your_db_host',
+            DB_PORT: '5432',
+            DB_NAME: 'your_db_name',
+            DB_USER: 'your_db_user',
+            DB_PASSWORD: 'your_db_password',
+            DB_SSL: 'false'
         };
         
         this.config = template;
@@ -186,7 +192,8 @@ class ConfigManager {
         if (hideSensitive) {
             const sensitiveKeys = [
                 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 
-                'PEERTUBE_PASSWORD', 'DEFAULT_VIDEO_PASSWORD', 'CLAUDE_API_KEY', 'ANITORRENT_API_KEY'
+                'PEERTUBE_PASSWORD', 'DEFAULT_VIDEO_PASSWORD', 'CLAUDE_API_KEY', 'ANITORRENT_API_KEY',
+                'DB_PASSWORD'
             ];
             
             sensitiveKeys.forEach(key => {
@@ -209,6 +216,17 @@ class ConfigManager {
         return {
             apiKey: this.get('ANITORRENT_API_KEY'),
             apiUrl: 'https://api.anitorrent.com'
+        };
+    }
+
+    getDatabaseConfig() {
+        return {
+            host: this.get('DB_HOST'),
+            port: parseInt(this.get('DB_PORT', '5432')),
+            database: this.get('DB_NAME'),
+            user: this.get('DB_USER'),
+            password: this.get('DB_PASSWORD'),
+            ssl: this.get('DB_SSL', 'false') === 'true'
         };
     }
 

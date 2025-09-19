@@ -14,6 +14,7 @@ const peertubeCommand = require('../src/commands/peertube');
 const videoCommand = require('../src/commands/video');
 const filesCommand = require('../src/commands/files');
 const rssCommand = require('../src/commands/rss');
+const episodesCommand = require('../src/commands/episodes');
 
 const program = new Command();
 
@@ -34,6 +35,7 @@ program.addCommand(peertubeCommand);
 program.addCommand(videoCommand);
 program.addCommand(filesCommand);
 program.addCommand(rssCommand);
+program.addCommand(episodesCommand);
 
 program.on('command:*', () => {
   console.error(chalk.red(`Invalid command: ${program.args.join(' ')}`));

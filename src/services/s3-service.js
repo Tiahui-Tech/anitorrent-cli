@@ -12,7 +12,7 @@ class S3Service {
             httpOptions: { timeout: 0 },
         });
         this.bucketName = config.bucketName;
-        this.publicDomain = config.publicDomain || 'https://cdn.anitorrent.com';
+        this.publicDomain = config.publicDomain || 'https://link.storjshare.io/raw/jwrbj2f6pcl4pkhmlag5tulgcwya/video-metadata';
     }
 
     async uploadFile(filePath, fileName, silent = false) {

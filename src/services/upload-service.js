@@ -6,6 +6,7 @@ const PeerTubeService = require('./peertube-service');
 const AniTorrentService = require('./anitorrent-service');
 const TorrentService = require('./torrent-service');
 const SubtitleService = require('./subtitle-service');
+const AniZipService = require('./anizip-service');
 const Validators = require('../utils/validators');
 
 class UploadService {
@@ -26,7 +27,13 @@ class UploadService {
       keepR2File,
       animeId,
       subtitleTrack,
+      subtitleSuffix,
       extractAudio,
+      audioTrack,
+      audioSuffix,
+      audioLatinoTrack,
+      ignoredSubtitleTracks = [],
+      ignoredAudioTracks = [],
       customName,
       timestamp,
       useTitle,
@@ -49,43 +56,65 @@ class UploadService {
         uploadFileName = fileInfo.fileName;
       }
 
-      const fs = require('fs').promises;
-      const stats = await fs.stat(fileInfo.resolvedPath);
-      const fileSize = Validators.formatFileSize(stats.size);
+      let fileSize = 'Unknown';
+      let videoUrl = fileInfo.resolvedPath;
 
-      if (fileInfo.downloadedFromTorrent) {
-        this.logger.info(`Source: Torrent download`);
+      if (fileInfo.isUrl) {
+        this.logger.info(`Source: Direct URL`);
+        this.logger.info(`URL: ${fileInfo.originalPath}`);
+        if (fileInfo.localFile) {
+          this.logger.info(`Local file for extraction: ${fileInfo.localFile}`);
+        }
+        this.logger.info(`Upload name: ${uploadFileName}`);
+        this.logger.separator();
+
+        this.logger.step('🔗', 'Using direct URL (skipping S3 upload)');
+        this.logger.info(`Video URL: ${videoUrl}`, 1);
+        
+        uploadResult = { 
+          publicUrl: videoUrl,
+          Key: null
+        };
+        r2FileName = null;
       } else {
-        this.logger.info(`File: ${fileInfo.originalPath}`);
-        this.logger.info(`Resolved path: ${fileInfo.resolvedPath}`);
+        const fs = require('fs').promises;
+        const stats = await fs.stat(fileInfo.resolvedPath);
+        fileSize = Validators.formatFileSize(stats.size);
+
+        if (fileInfo.downloadedFromTorrent) {
+          this.logger.info(`Source: Torrent download`);
+        } else {
+          this.logger.info(`File: ${fileInfo.originalPath}`);
+          this.logger.info(`Resolved path: ${fileInfo.resolvedPath}`);
+        }
+        this.logger.info(`Size: ${fileSize}`);
+        this.logger.info(`Upload name: ${uploadFileName}`);
+        this.logger.separator();
+
+        this.logger.step('📤', 'Uploading to S3');
+
+        const s3Service = new S3Service(this.r2Config);
+        const spinner = ora('Uploading to S3...').start();
+
+        uploadResult = await s3Service.uploadFile(
+          fileInfo.resolvedPath,
+          `videos/${uploadFileName}`,
+          true
+        );
+        r2FileName = uploadResult.Key;
+
+        spinner.succeed('Upload completed');
+        this.logger.info(`Public URL: ${uploadResult.publicUrl}`, 1);
+
+        const urlParts = uploadResult.publicUrl.split('/');
+        const encodedFileName = encodeURIComponent(urlParts.pop());
+        const baseUrl = urlParts.join('/');
+        videoUrl = `${baseUrl}/${encodedFileName}`;
       }
-      this.logger.info(`Size: ${fileSize}`);
-      this.logger.info(`Upload name: ${uploadFileName}`);
-      this.logger.separator();
-
-      this.logger.step('📤', 'Uploading to S3');
-
-      const s3Service = new S3Service(this.r2Config);
-      const spinner = ora('Uploading to S3...').start();
-
-      uploadResult = await s3Service.uploadFile(
-        fileInfo.resolvedPath,
-        `videos/${uploadFileName}`,
-        true
-      );
-      r2FileName = uploadResult.Key;
-
-      spinner.succeed('Upload completed');
-      this.logger.info(`Public URL: ${uploadResult.publicUrl}`, 1);
 
       this.logger.step('📥', 'Importing to PeerTube');
 
       const peertubeService = new PeerTubeService(this.peertubeConfig);
-
-      const urlParts = uploadResult.publicUrl.split('/');
-      const encodedFileName = encodeURIComponent(urlParts.pop());
-      const baseUrl = urlParts.join('/');
-      const videoUrl = `${baseUrl}/${encodedFileName}`;
 
       let videoName = customName;
       if (!videoName) {
@@ -169,20 +198,25 @@ class UploadService {
         await this.extractAndUploadSubtitles(
           fileInfo,
           processingResult.video,
-          subtitleTrack
+          subtitleTrack,
+          subtitleSuffix,
+          ignoredSubtitleTracks
         );
 
         if (extractAudio) {
-          await this.extractAndUploadAudio(fileInfo, processingResult.video);
+          await this.extractAndUploadAudio(fileInfo, processingResult.video, audioTrack, audioSuffix, audioLatinoTrack, ignoredAudioTracks);
         }
       }
 
-      if (!keepR2File) {
+      if (!keepR2File && r2FileName) {
         this.logger.step('🗑️', 'Cleaning up S3 file');
 
+        const s3Service = new S3Service(this.r2Config);
         const cleanupSpinner = ora('Deleting S3 file...').start();
         await s3Service.deleteFile(r2FileName, true);
         cleanupSpinner.succeed('S3 file deleted');
+      } else if (fileInfo.isUrl) {
+        this.logger.step('🔗', 'No S3 cleanup needed (direct URL was used)');
       }
 
       return {
@@ -222,16 +256,11 @@ class UploadService {
       const fileName = fileInfo.fileName;
       const anitomyResult = await anitomy(fileName);
 
-      if (!anitomyResult.episode_number) {
-        episodeSpinner.warn('Could not extract episode number from filename');
-        this.logger.warning(
-          'Skipping episode update - no episode number found'
-        );
-        return;
-      }
+      let finalEpisodeNumber = anitomyResult.episode_number || 1;
 
-      const episodeNumber = parseInt(anitomyResult.episode_number);
+      const episodeNumber = parseInt(finalEpisodeNumber);
       const anitorrentService = new AniTorrentService();
+      const aniZipService = new AniZipService();
 
       let animeTitle = anitomyResult.anime_title || video.name;
 
@@ -243,9 +272,30 @@ class UploadService {
         // Continue with parsed title
       }
 
-      const thumbnailUrl = video.previewPath
-        ? `https://peertube.anitorrent.com${video.previewPath}`
-        : null;
+      let thumbnailUrl = null;
+      
+      try {
+        const aniZipMappings = await aniZipService.getAnimeMappings(animeId);
+        if (aniZipMappings) {
+          const aniZipImageUrl = aniZipService.getEpisodeImageUrl(aniZipMappings, episodeNumber);
+          if (aniZipImageUrl) {
+            thumbnailUrl = aniZipImageUrl;
+            this.logger.info(`Using ani.zip episode image: ${thumbnailUrl}`, 1);
+          }
+        }
+      } catch (error) {
+        this.logger.verbose(`Failed to get ani.zip image: ${error.message}`);
+      }
+
+      if (!thumbnailUrl) {
+        thumbnailUrl = video.previewPath
+          ? `https://peertube.anitorrent.com${video.previewPath}`
+          : null;
+        
+        if (thumbnailUrl) {
+          this.logger.info('Using PeerTube preview image as fallback', 1);
+        }
+      }
 
       if (!thumbnailUrl) {
         throw new Error('No thumbnail available for episode');
@@ -291,19 +341,37 @@ class UploadService {
     }
   }
 
-  async extractAndUploadSubtitles(fileInfo, video, subtitleTrack) {
-    this.logger.step('🎬', 'Extracting all subtitles');
+  async extractAndUploadSubtitles(fileInfo, video, subtitleTrack, customSuffix = null, ignoredTracks = []) {
+    if (customSuffix && subtitleTrack !== null) {
+      this.logger.step('🎬', `Extracting subtitle track ${subtitleTrack} with custom suffix`);
+    } else {
+      this.logger.step('🎬', 'Extracting all subtitles');
+    }
+
+    if (ignoredTracks.length > 0) {
+      this.logger.info(`Ignoring subtitle tracks: ${ignoredTracks.join(', ')}`, 1);
+    }
 
     try {
       const subtitleService = new SubtitleService();
 
       const extractSpinner = ora('Analyzing subtitle tracks...').start();
 
-      const tracks = await subtitleService.listSubtitleTracks(
-        fileInfo.resolvedPath
-      );
+      const sourceFile = fileInfo.isUrl && fileInfo.localFile ? fileInfo.localFile : fileInfo.resolvedPath;
+      
+      if (fileInfo.isUrl && !fileInfo.localFile) {
+        extractSpinner.succeed('Skipping subtitle extraction - no local file specified for URL');
+        this.logger.info(
+          'To extract subtitles from URLs, specify --local-file option',
+          1
+        );
+        return;
+      }
 
-      if (tracks.length === 0) {
+      const allTracks = await subtitleService.listSubtitleTracks(sourceFile);
+      const tracks = allTracks.filter(track => !ignoredTracks.includes(track.trackNumber));
+
+      if (allTracks.length === 0) {
         extractSpinner.succeed('No subtitle tracks found');
         this.logger.info(
           'Skipping subtitle extraction - no tracks available',
@@ -312,35 +380,59 @@ class UploadService {
         return;
       }
 
-      extractSpinner.succeed(`Found ${tracks.length} subtitle tracks`);
+      if (tracks.length === 0) {
+        extractSpinner.succeed('All subtitle tracks are ignored');
+        this.logger.info(
+          'Skipping subtitle extraction - all tracks are ignored',
+          1
+        );
+        return;
+      }
 
-      const extractionSpinner = ora(
-        'Extracting all subtitle tracks...'
-      ).start();
+      const ignoredCount = allTracks.length - tracks.length;
+      if (ignoredCount > 0) {
+        extractSpinner.succeed(`Found ${allTracks.length} subtitle tracks (${tracks.length} available, ${ignoredCount} ignored)`);
+      } else {
+        extractSpinner.succeed(`Found ${tracks.length} subtitle tracks`);
+      }
 
       const tempDir = process.cwd();
       const s3Service = new S3Service(this.r2Config);
       const fs = require('fs').promises;
-
       let successfulUploads = 0;
       let failedExtractions = 0;
+      let extractionSpinner;
 
-      for (let i = 0; i < tracks.length; i++) {
-        const track = tracks[i];
+      if (customSuffix && subtitleTrack !== null) {
+        extractionSpinner = ora(
+          `Extracting track ${subtitleTrack} with custom suffix...`
+        ).start();
+
+        if (ignoredTracks.includes(subtitleTrack)) {
+          extractionSpinner.fail(`Track ${subtitleTrack} is ignored`);
+          this.logger.warning(`Subtitle track ${subtitleTrack} is in the ignored tracks list`);
+          return;
+        }
+
+        const targetTrack = allTracks.find(track => track.trackNumber === subtitleTrack);
+        
+        if (!targetTrack) {
+          extractionSpinner.fail(`Track ${subtitleTrack} not found`);
+          this.logger.warning(`Subtitle track ${subtitleTrack} not found in video`);
+          return;
+        }
 
         try {
-          // Generate filename with language suffix
-          const suffix = subtitleService.getLanguageSuffix(track, tracks);
-          const outputFileName = suffix
-            ? `${video.shortUUID}_${suffix}.ass`
-            : `${video.shortUUID}.ass`;
+          const outputFileName = (customSuffix === 'null' || customSuffix === 'default') 
+            ? `${video.shortUUID}.ass`
+            : `${video.shortUUID}_${customSuffix}.ass`;
 
-          extractionSpinner.text = `Extracting track ${i} (${track.language})...`;
+          extractionSpinner.text = `Extracting track ${subtitleTrack} (${targetTrack.language})...`;
 
           const extractResult = await subtitleService.extractSubtitles(
-            fileInfo.resolvedPath,
+            sourceFile,
             outputFileName,
-            track.trackNumber,
+            subtitleTrack,
             tempDir
           );
 
@@ -355,30 +447,83 @@ class UploadService {
               );
 
               successfulUploads++;
+              extractionSpinner.succeed(`Subtitle track ${subtitleTrack} extracted and uploaded successfully`);
 
-              // Cleanup temp file
               try {
                 await fs.unlink(extractResult.outputPath);
               } catch (cleanupError) {
                 // Ignore cleanup errors
               }
             } catch (uploadError) {
-              this.logger.warning(
-                `Failed to upload ${outputFileName}: ${uploadError.message}`
-              );
+              extractionSpinner.fail(`Failed to upload ${outputFileName}: ${uploadError.message}`);
               failedExtractions++;
             }
           } else {
-            this.logger.warning(
-              `Failed to extract track ${i} (${track.language}): ${extractResult.error}`
-            );
+            extractionSpinner.fail(`Failed to extract track ${subtitleTrack}: ${extractResult.error}`);
             failedExtractions++;
           }
         } catch (trackError) {
-          this.logger.warning(
-            `Error processing track ${i}: ${trackError.message}`
-          );
+          extractionSpinner.fail(`Error processing track ${subtitleTrack}: ${trackError.message}`);
           failedExtractions++;
+        }
+      } else {
+        extractionSpinner = ora(
+          'Extracting all subtitle tracks...'
+        ).start();
+
+        for (let i = 0; i < tracks.length; i++) {
+          const track = tracks[i];
+
+          try {
+            const suffix = subtitleService.getLanguageSuffix(track, tracks);
+            const outputFileName = suffix
+              ? `${video.shortUUID}_${suffix}.ass`
+              : `${video.shortUUID}.ass`;
+
+            extractionSpinner.text = `Extracting track ${i} (${track.language})...`;
+
+            const extractResult = await subtitleService.extractSubtitles(
+              sourceFile,
+              outputFileName,
+              track.trackNumber,
+              tempDir
+            );
+
+            if (extractResult.success) {
+              try {
+                extractionSpinner.text = `Uploading ${outputFileName}...`;
+
+                const subtitleUploadResult = await s3Service.uploadFile(
+                  extractResult.outputPath,
+                  `subtitles/${outputFileName}`,
+                  true
+                );
+
+                successfulUploads++;
+
+                try {
+                  await fs.unlink(extractResult.outputPath);
+                } catch (cleanupError) {
+                  // Ignore cleanup errors
+                }
+              } catch (uploadError) {
+                this.logger.warning(
+                  `Failed to upload ${outputFileName}: ${uploadError.message}`
+                );
+                failedExtractions++;
+              }
+            } else {
+              this.logger.warning(
+                `Failed to extract track ${i} (${track.language}): ${extractResult.error}`
+              );
+              failedExtractions++;
+            }
+          } catch (trackError) {
+            this.logger.warning(
+              `Error processing track ${i}: ${trackError.message}`
+            );
+            failedExtractions++;
+          }
         }
       }
 
@@ -414,8 +559,16 @@ class UploadService {
     }
   }
 
-  async extractAndUploadAudio(fileInfo, video) {
-    this.logger.step('🎵', 'Extracting all audio tracks');
+  async extractAndUploadAudio(fileInfo, video, audioTrack = null, customSuffix = null, audioLatinoTrack = null, ignoredTracks = []) {
+    if (customSuffix && audioTrack !== null) {
+      this.logger.step('🎵', `Extracting audio track ${audioTrack} with custom suffix`);
+    } else {
+      this.logger.step('🎵', 'Extracting all audio tracks');
+    }
+
+    if (ignoredTracks.length > 0) {
+      this.logger.info(`Ignoring audio tracks: ${ignoredTracks.join(', ')}`, 1);
+    }
 
     try {
       const AudioService = require('./audio-service');
@@ -423,17 +576,38 @@ class UploadService {
 
       const extractSpinner = ora('Analyzing audio tracks...').start();
 
-      const tracks = await audioService.listAudioTracks(fileInfo.resolvedPath);
+      const sourceFile = fileInfo.isUrl && fileInfo.localFile ? fileInfo.localFile : fileInfo.resolvedPath;
+      
+      if (fileInfo.isUrl && !fileInfo.localFile) {
+        extractSpinner.succeed('Skipping audio extraction - no local file specified for URL');
+        this.logger.info(
+          'To extract audio from URLs, specify --local-file option',
+          1
+        );
+        return;
+      }
 
-      if (tracks.length === 0) {
+      const allTracks = await audioService.listAudioTracks(sourceFile);
+      const tracks = allTracks.filter(track => !ignoredTracks.includes(track.trackNumber));
+
+      if (allTracks.length === 0) {
         extractSpinner.succeed('No audio tracks found');
         this.logger.info('Skipping audio extraction - no tracks available', 1);
         return;
       }
 
-      extractSpinner.succeed(`Found ${tracks.length} audio tracks`);
+      if (tracks.length === 0) {
+        extractSpinner.succeed('All audio tracks are ignored');
+        this.logger.info('Skipping audio extraction - all tracks are ignored', 1);
+        return;
+      }
 
-      const extractionSpinner = ora('Extracting all audio tracks...').start();
+      const ignoredCount = allTracks.length - tracks.length;
+      if (ignoredCount > 0) {
+        extractSpinner.succeed(`Found ${allTracks.length} audio tracks (${tracks.length} available, ${ignoredCount} ignored)`);
+      } else {
+        extractSpinner.succeed(`Found ${tracks.length} audio tracks`);
+      }
 
       const tempDir = process.cwd();
       const s3Service = new S3Service(this.r2Config);
@@ -441,23 +615,38 @@ class UploadService {
 
       let successfulUploads = 0;
       let failedExtractions = 0;
+      let extractionSpinner;
 
-      for (let i = 0; i < tracks.length; i++) {
-        const track = tracks[i];
+      if (customSuffix && audioTrack !== null) {
+        extractionSpinner = ora(
+          `Extracting track ${audioTrack} with custom suffix...`
+        ).start();
+
+        if (ignoredTracks.includes(audioTrack)) {
+          extractionSpinner.fail(`Track ${audioTrack} is ignored`);
+          this.logger.warning(`Audio track ${audioTrack} is in the ignored tracks list`);
+          return;
+        }
+
+        const targetTrack = allTracks.find(track => track.trackNumber === audioTrack);
+        
+        if (!targetTrack) {
+          extractionSpinner.fail(`Track ${audioTrack} not found`);
+          this.logger.warning(`Audio track ${audioTrack} not found in video`);
+          return;
+        }
 
         try {
-          // Generate filename with language suffix using the AudioService logic
-          const suffix = audioService.getLanguageSuffix(track, tracks);
-          const outputFileName = suffix
-            ? `${video.shortUUID}_${suffix}.mp3`
-            : `${video.shortUUID}.mp3`;
+          const outputFileName = (customSuffix === 'null' || customSuffix === 'default') 
+            ? `${video.shortUUID}.mp3`
+            : `${video.shortUUID}_${customSuffix}.mp3`;
 
-          extractionSpinner.text = `Extracting track ${i} (${track.language})...`;
+          extractionSpinner.text = `Extracting track ${audioTrack} (${targetTrack.language})...`;
 
           const extractResult = await audioService.extractAudio(
-            fileInfo.resolvedPath,
+            sourceFile,
             outputFileName,
-            track.trackNumber,
+            audioTrack,
             tempDir,
             'mp3',
             '192k'
@@ -474,30 +663,85 @@ class UploadService {
               );
 
               successfulUploads++;
+              extractionSpinner.succeed(`Audio track ${audioTrack} extracted and uploaded successfully`);
 
-              // Cleanup temp file
               try {
                 await fs.unlink(extractResult.outputPath);
               } catch (cleanupError) {
                 // Ignore cleanup errors
               }
             } catch (uploadError) {
-              this.logger.warning(
-                `Failed to upload ${outputFileName}: ${uploadError.message}`
-              );
+              extractionSpinner.fail(`Failed to upload ${outputFileName}: ${uploadError.message}`);
               failedExtractions++;
             }
           } else {
-            this.logger.warning(
-              `Failed to extract track ${i} (${track.language}): ${extractResult.error}`
-            );
+            extractionSpinner.fail(`Failed to extract track ${audioTrack}: ${extractResult.error}`);
             failedExtractions++;
           }
         } catch (trackError) {
-          this.logger.warning(
-            `Error processing track ${i}: ${trackError.message}`
-          );
+          extractionSpinner.fail(`Error processing track ${audioTrack}: ${trackError.message}`);
           failedExtractions++;
+        }
+      } else {
+        extractionSpinner = ora('Extracting all audio tracks...').start();
+
+        for (let i = 0; i < tracks.length; i++) {
+          const track = tracks[i];
+
+          try {
+            // Generate filename with language suffix using the AudioService logic
+            const suffix = audioService.getLanguageSuffix(track, allTracks, audioLatinoTrack);
+            const outputFileName = suffix
+              ? `${video.shortUUID}_${suffix}.mp3`
+              : `${video.shortUUID}.mp3`;
+
+            extractionSpinner.text = `Extracting track ${i} (${track.language})...`;
+
+            const extractResult = await audioService.extractAudio(
+              sourceFile,
+              outputFileName,
+              track.trackNumber,
+              tempDir,
+              'mp3',
+              '192k'
+            );
+
+            if (extractResult.success) {
+              try {
+                extractionSpinner.text = `Uploading ${outputFileName}...`;
+
+                const audioUploadResult = await s3Service.uploadFile(
+                  extractResult.outputPath,
+                  `audios/${outputFileName}`,
+                  true
+                );
+
+                successfulUploads++;
+
+                // Cleanup temp file
+                try {
+                  await fs.unlink(extractResult.outputPath);
+                } catch (cleanupError) {
+                  // Ignore cleanup errors
+                }
+              } catch (uploadError) {
+                this.logger.warning(
+                  `Failed to upload ${outputFileName}: ${uploadError.message}`
+                );
+                failedExtractions++;
+              }
+            } else {
+              this.logger.warning(
+                `Failed to extract track ${i} (${track.language}): ${extractResult.error}`
+              );
+              failedExtractions++;
+            }
+          } catch (trackError) {
+            this.logger.warning(
+              `Error processing track ${i}: ${trackError.message}`
+            );
+            failedExtractions++;
+          }
         }
       }
 

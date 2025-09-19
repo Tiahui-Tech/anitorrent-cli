@@ -164,6 +164,22 @@ class AniTorrentService {
         }
     }
 
+    async getSubtitles(shortUUID) {
+        try {
+            const response = await this.makeRequest(`${this.apiUrl}/subtitles/${shortUUID}/all`, {
+                headers: this.getAuthHeaders()
+            });
+            
+            if (response.status < 200 || response.status >= 300) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            return response.data || [];
+        } catch (error) {
+            throw new Error(`Error fetching subtitles: ${error.message}`);
+        }
+    }
+
     async testConnection() {
         try {
             const response = await this.makeRequest(`${this.apiUrl}/health`, {

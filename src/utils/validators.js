@@ -130,6 +130,37 @@ class Validators {
         const remainingSeconds = seconds % 60;
         return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
     }
+
+    static isVideoUrl(input) {
+        if (!this.isValidUrl(input)) {
+            return false;
+        }
+        
+        const url = new URL(input);
+        const pathname = url.pathname.toLowerCase();
+        const videoExtensions = ['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm'];
+        
+        return videoExtensions.some(ext => pathname.endsWith(ext));
+    }
+
+    static async validateFileOrUrl(input) {
+        if (this.isVideoUrl(input)) {
+            return {
+                isUrl: true,
+                originalPath: input,
+                resolvedPath: input,
+                exists: true,
+                fileName: input.split('/').pop(),
+                isAbsolute: false
+            };
+        }
+        
+        const fileValidation = await this.validateFilePath(input);
+        return {
+            isUrl: false,
+            ...fileValidation
+        };
+    }
 }
 
 module.exports = Validators; 

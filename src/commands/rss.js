@@ -7,12 +7,20 @@ const ConfigManager = require('../utils/config');
 const Validators = require('../utils/validators');
 const UploadService = require('../services/upload-service');
 const AniTorrentService = require('../services/anitorrent-service');
+const PostgreSQLService = require('../services/postgresql-service');
 const TorrentService = require('../services/torrent-service');
+const AniZipService = require('../services/anizip-service');
 
 const rssCommand = new Command('rss');
 rssCommand.description('RSS feed operations');
 
-const toshoUrl = 'https://feed.animetosho.org/json?qx=1&q=%22[Erai-raws]%20%22%221080p%22!(%22REPACK%22|%22v2%22|%22(ita)%22|%22~%22|%22BATCH%22)'
+const buildToshoUrl = (includeHevc = false) => {
+  const excludePattern = includeHevc 
+    ? '!("REPACK"|"v2"|"(ita)"|"~"|"BATCH")'
+    : '!("REPACK"|"v2"|"(ita)"|"~"|"BATCH"|"HEVC")';
+  
+  return `https://feed.animetosho.org/json?qx=1&q="[Erai-raws] ""1080p""MultiSub"${excludePattern}`;
+};
 
 const fetchWithRetry = async (url, retries = 3) => {
   const https = require('https');
@@ -63,6 +71,7 @@ const filterDuplicateEpisodes = async (episodes, logger) => {
   const episodeMap = new Map();
   const duplicates = [];
   const invalidEpisodes = [];
+  const aniZipService = new AniZipService();
   
   for (const episode of episodes) {
     try {
@@ -72,8 +81,7 @@ const filterDuplicateEpisodes = async (episodes, logger) => {
         continue;
       }
       
-      const anizipUrl = `https://api.ani.zip/mappings?anidb_id=${episode.anidb_aid}`;
-      const anizipData = await fetchWithRetry(anizipUrl);
+      const anizipData = await aniZipService.getAnimeMappingsByAniDbId(episode.anidb_aid);
       
       if (!anizipData || !anizipData.mappings || !anizipData.mappings.anilist_id) {
         invalidEpisodes.push(episode);
@@ -137,24 +145,52 @@ const filterDuplicateEpisodes = async (episodes, logger) => {
   return filteredEpisodes;
 };
 
-const checkEpisodeExists = async (episode, anitorrentService, logger) => {
-  try {
-    const anizipUrl = `https://api.ani.zip/mappings?anidb_id=${episode.anidb_aid}`;
-    const anizipData = await fetchWithRetry(anizipUrl);
-    
-    const anilistId = anizipData.mappings.anilist_id;
-    const episodeMatch = Object.values(anizipData.episodes || {}).find(ep => 
-      ep.anidbEid === episode.anidb_eid
-    );
-    
-    const episodeNumber = episodeMatch.episode;
-    const existingEpisode = await anitorrentService.getEpisodeByNumber(anilistId, episodeNumber);
-    
-    return existingEpisode !== null;
-  } catch (error) {
-    logger.verbose(`Error checking episode existence: ${error.message}`);
-    return false;
+const checkEpisodeExists = async (episode, dbService, logger, maxRetries = 3) => {
+  if (!dbService) {
+    throw new Error('Database service is required but not configured. Please configure database settings first.');
   }
+
+  const aniZipService = new AniZipService();
+  let lastError;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const anizipData = await aniZipService.getAnimeMappingsByAniDbId(episode.anidb_aid);
+      
+      if (!anizipData || !anizipData.mappings || !anizipData.mappings.anilist_id) {
+        throw new Error('No AniList ID found in ani.zip mapping');
+      }
+      
+      const anilistId = anizipData.mappings.anilist_id;
+      const filteredEpisodes = Object.values(anizipData.episodes || {}).filter(ep => !ep.episode.includes('S'));
+
+      const episodeMatch = filteredEpisodes.find(ep => 
+        ep.anidbEid === episode.anidb_eid
+      );
+      
+      if (!episodeMatch) {
+        return null;
+      }
+      
+      const episodeNumber = episodeMatch.episode;
+      
+      const existingEpisode = await dbService.getEpisodeByNumber(anilistId, episodeNumber);
+      
+      return existingEpisode !== null;
+      
+    } catch (error) {
+      lastError = error;
+      logger.verbose(`Attempt ${attempt}/${maxRetries} failed checking episode existence: ${error.message}`);
+      
+      if (attempt < maxRetries) {
+        const delay = Math.pow(2, attempt) * 1000;
+        logger.verbose(`Retrying in ${delay/1000} seconds...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+  
+  throw new Error(`Failed to check episode existence after ${maxRetries} attempts. Last error: ${lastError.message}`);
 };
 
 rssCommand
@@ -173,6 +209,7 @@ rssCommand
   .option('--use-title', 'use the title of the video for the upload name')
   .option('--kill-existing', 'kill existing torrent processes before starting')
   .option('--clean-downloads', 'clean existing files from download directory before starting')
+  .option('--hevc', 'include HEVC episodes in search results')
   .action(async (options) => {
     const logger = new Logger({ 
       verbose: options.debug || false,
@@ -193,9 +230,16 @@ rssCommand
 
       logger.header('RSS Feed Test');
       
+      if (options.hevc) {
+        logger.info('📺 HEVC: Enabled (will include HEVC episodes)');
+      } else {
+        logger.info('📺 HEVC: Disabled (will exclude HEVC episodes)');
+      }
+      logger.separator();
+      
       const toshoSpinner = ora('Fetching from AnimeToSho RSS...').start();
       
-      const toshoData = await fetchWithRetry(toshoUrl);
+      const toshoData = await fetchWithRetry(buildToshoUrl(options.hevc));
       toshoSpinner.succeed('AnimeToSho data fetched successfully');
       
       if (!toshoData || !Array.isArray(toshoData) || toshoData.length === 0) {
@@ -217,9 +261,9 @@ rssCommand
       }
       
       const anizipSpinner = ora('Fetching anime data from ani.zip...').start();
-      const anizipUrl = `https://api.ani.zip/mappings?anidb_id=${firstEpisode.anidb_aid}`;
+      const aniZipService = new AniZipService();
       
-      const anizipData = await fetchWithRetry(anizipUrl);
+      const anizipData = await aniZipService.getAnimeMappingsByAniDbId(firstEpisode.anidb_aid);
       anizipSpinner.succeed('Ani.zip data fetched successfully');
       
       if (!anizipData || !anizipData.mappings || !anizipData.mappings.anilist_id) {
@@ -412,6 +456,7 @@ rssCommand
   .option('--clean-downloads', 'clean existing files from download directory before starting')
   .option('--memory-cleanup', 'force garbage collection and memory cleanup between episodes')
   .option('--no-seeding', 'disable seeding to reduce network connections (recommended for ENOBUFS issues)')
+  .option('--hevc', 'include HEVC episodes in search results')
   .action(async (options) => {
     const logger = new Logger({ 
       verbose: options.debug || false,
@@ -422,7 +467,25 @@ rssCommand
       const config = new ConfigManager();
       config.validateRequired();
       
-      const anitorrentService = new AniTorrentService(config);
+      const dbConfig = config.getDatabaseConfig();
+      if (!dbConfig.host || dbConfig.host === 'your_db_host') {
+        logger.error('Database is not configured. RSS auto mode requires database configuration.');
+        logger.info('Please run "anitorrent config setup" to configure database settings.');
+        process.exit(1);
+      }
+      
+      logger.info('Testing database connection...');
+      const testDbService = new PostgreSQLService(dbConfig);
+      const testResult = await testDbService.testConnection();
+      if (!testResult.success) {
+        logger.error(`Database connection failed: ${testResult.message}`);
+        logger.info('Please check your database configuration and ensure the database is running.');
+        process.exit(1);
+      }
+      await testDbService.close();
+      logger.success('Database connection verified');
+      logger.separator();
+
       const defaults = config.getDefaults();
       
       const channelId = options.channel ? parseInt(options.channel) : await config.getDefaultChannelId();
@@ -482,6 +545,12 @@ rssCommand
         logger.info('🌱 Seeding: Enabled');
       }
       
+      if (options.hevc) {
+        logger.info('📺 HEVC: Enabled (will include HEVC episodes)');
+      } else {
+        logger.info('📺 HEVC: Disabled (will exclude HEVC episodes)');
+      }
+      
       if (options.dryRun) {
         logger.info('Mode: Dry run (single check)');
       } else if (isContinuous) {
@@ -504,10 +573,27 @@ rssCommand
         
         logger.step('🔄', `Check #${runCount} - ${runStartTime.toLocaleString()}`);
         
+        let dbService = null;
+        try {
+          const dbConfig = config.getDatabaseConfig();
+          if (!dbConfig.host || dbConfig.host === 'your_db_host') {
+            throw new Error('Database is not configured. Please run "anitorrent config setup" to configure database settings.');
+          }
+          dbService = new PostgreSQLService(dbConfig);
+          
+          // const testResult = await dbService.testConnection();
+          // if (!testResult.success) {
+          //   throw new Error(`Database connection failed: ${testResult.message}`);
+          // }
+        } catch (error) {
+          logger.error(`Database configuration error: ${error.message}`);
+          throw error;
+        }
+        
         try {
           const toshoSpinner = ora('Fetching from AnimeToSho RSS...').start();
           
-          const toshoData = await fetchWithRetry(toshoUrl);
+          const toshoData = await fetchWithRetry(buildToshoUrl(options.hevc));
           toshoSpinner.succeed('AnimeToSho data fetched successfully');
           
           if (!toshoData || !Array.isArray(toshoData) || toshoData.length === 0) {
@@ -525,16 +611,20 @@ rssCommand
           const checkSpinner = ora('Checking for existing episodes...').start();
           const episodesToProcess = [];
           
-          for (const episode of filteredEpisodes) {
-            const exists = await checkEpisodeExists(episode, anitorrentService, logger);
-            if (!exists) {
-              episodesToProcess.push(episode);
-            } else {
-              logger.verbose(`Episode already exists: ${episode.title}`);
+          try {
+            for (const episode of filteredEpisodes) {
+              const exists = await checkEpisodeExists(episode, dbService, logger);
+              if (!exists) {
+                episodesToProcess.push(episode);
+              } else {
+                logger.verbose(`Episode already exists: ${episode.title}`);
+              }
             }
+            checkSpinner.succeed(`Found ${episodesToProcess.length} new episodes to process`);
+          } catch (error) {
+            checkSpinner.fail('Failed to check existing episodes');
+            throw error;
           }
-          
-          checkSpinner.succeed(`Found ${episodesToProcess.length} new episodes to process`);
           
           if (episodesToProcess.length === 0) {
             logger.info('No new episodes to process');
@@ -551,8 +641,13 @@ rssCommand
               logger.info(`   Seeders: ${chalk.green(episode.seeders)} | Leechers: ${chalk.red(episode.leechers)}`);
               
               try {
-                const anizipUrl = `https://api.ani.zip/mappings?anidb_id=${episode.anidb_aid}`;
-                const anizipData = await fetchWithRetry(anizipUrl);
+                const aniZipService = new AniZipService();
+                const anizipData = await aniZipService.getAnimeMappingsByAniDbId(episode.anidb_aid);
+                
+                if (!anizipData || !anizipData.mappings || !anizipData.mappings.anilist_id) {
+                  logger.info(`   Metadata: ${chalk.red('No AniList mapping found')}`);
+                  continue;
+                }
                 
                 const anilistId = anizipData.mappings.anilist_id;
                 const animeTitle = anizipData.titles?.en || anizipData.titles?.['x-jat'] || anizipData.titles?.ja || 'Unknown';
@@ -597,8 +692,8 @@ rssCommand
             let fileInfo = null;
             
             try {
-              const anizipUrl = `https://api.ani.zip/mappings?anidb_id=${episode.anidb_aid}`;
-              const anizipData = await fetchWithRetry(anizipUrl);
+              const aniZipService = new AniZipService();
+              const anizipData = await aniZipService.getAnimeMappingsByAniDbId(episode.anidb_aid);
               
               if (!anizipData || !anizipData.mappings || !anizipData.mappings.anilist_id) {
                 throw new Error('No AniList ID found in ani.zip mapping');
@@ -703,6 +798,14 @@ rssCommand
             console.error(error);
           }
           return { processed: 0, successful: 0, failed: 0 };
+        } finally {
+          if (dbService) {
+            try {
+              await dbService.close();
+            } catch (error) {
+              logger.verbose(`Error closing database connection: ${error.message}`);
+            }
+          }
         }
       };
 

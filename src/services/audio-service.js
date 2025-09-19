@@ -243,7 +243,7 @@ class AudioService {
         });
     }
 
-    getLanguageSuffix(track, allTracks = []) {
+    getLanguageSuffix(track, allTracks = [], audioLatinoTrack = null) {
         const language = track.language;
         const detail = track.languageDetail || '';
         
@@ -253,6 +253,16 @@ class AudioService {
         }
         // For Spanish, use specific suffixes
         else if (language === 'spa' || language === 'es') {
+            // If user explicitly specified a Latino track, use that
+            if (audioLatinoTrack !== null) {
+                if (track.trackNumber === audioLatinoTrack) {
+                    return 'lat';
+                } else {
+                    // All other Spanish tracks are assumed to be España
+                    return 'spa';
+                }
+            }
+            
             // If there's explicit detail about Latino or es-419, use 'lat' suffix
             if (detail.includes('Latino') || detail.includes('es-419')) {
                 return 'lat';
