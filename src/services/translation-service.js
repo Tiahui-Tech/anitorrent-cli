@@ -65,37 +65,59 @@ class TranslationService {
         return groups;
     }
 
-    async translateGroup(group, context, onProgress, customPromptPath = null) {
-        try {
-            const systemPrompt = await this.loadSystemPrompt(customPromptPath);
-            
-            const response = await this.claude.messages.create({
-                model: 'claude-3-7-sonnet-latest',
-                max_tokens: 1000,
-                temperature: 0.7,
-                system: systemPrompt,
-                messages: [
-                    {
-                        role: 'user',
-                        content: JSON.stringify(context),
-                    },
-                ],
-            });
+    async translateGroup(group, context, onProgress, customPromptPath = null, maxRetries = 5) {
+        let lastError;
+        
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                const systemPrompt = await this.loadSystemPrompt(customPromptPath);
+                
+                const response = await this.claude.messages.create({
+                    model: 'claude-4-sonnet-20250514',
+                    max_tokens: 1000,
+                    temperature: 0.7,
+                    system: systemPrompt,
+                    messages: [
+                        {
+                            role: 'user',
+                            content: JSON.stringify(context),
+                        },
+                    ],
+                });
 
-            const responseText = response.content[0].text.trim();
-            
-            if (!responseText.includes('Dialogue:')) {
-                return this.reconstructDialogueLines(group, responseText);
+                const responseText = response.content[0].text.trim();
+                
+                if (!responseText.includes('Dialogue:')) {
+                    return this.reconstructDialogueLines(group, responseText);
+                }
+
+                return this.processTranslatedBlock(group, responseText);
+
+            } catch (error) {
+                lastError = error;
+                
+                if (onProgress) {
+                    if (attempt < maxRetries) {
+                        onProgress({ 
+                            type: 'warning', 
+                            message: `Translation error (attempt ${attempt}/${maxRetries}): ${error.message}. Retrying...` 
+                        });
+                    } else {
+                        onProgress({ 
+                            type: 'error', 
+                            message: `Translation failed after ${maxRetries} attempts: ${error.message}` 
+                        });
+                    }
+                }
+
+                if (attempt < maxRetries) {
+                    const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
             }
-
-            return this.processTranslatedBlock(group, responseText);
-
-        } catch (error) {
-            if (onProgress) {
-                onProgress({ type: 'error', message: `Translation error: ${error.message}` });
-            }
-            return group.map(dialog => dialog.original);
         }
+
+        throw new Error(`Translation failed after ${maxRetries} attempts. Last error: ${lastError.message}`);
     }
 
     reconstructDialogueLines(group, translatedText) {
@@ -221,8 +243,18 @@ class TranslationService {
                 next: dialogGroups[index + 1]?.map(g => g.original).join('\n') || '',
             };
 
-            const translatedGroup = await this.translateGroup(group, context, onProgress, customPromptPath);
-            translatedLines.push(...translatedGroup);
+            try {
+                const translatedGroup = await this.translateGroup(group, context, onProgress, customPromptPath);
+                translatedLines.push(...translatedGroup);
+            } catch (error) {
+                if (onProgress) {
+                    onProgress({ 
+                        type: 'error', 
+                        message: `Translation process cancelled at group ${index + 1}/${dialogGroups.length}: ${error.message}` 
+                    });
+                }
+                throw new Error(`Translation process cancelled after group ${index + 1} failed: ${error.message}`);
+            }
 
             const delay = index % 5 === 0 ? 500 : 200;
             await new Promise(resolve => setTimeout(resolve, delay));

@@ -1,17 +1,56 @@
 <instructions>
-    <task>Traduce el texto recibido al español latino</task>
-    <requirements>
-        <requirement>Mantener exactamente los mismos códigos de formato</requirement>
-        <requirement>Preservar todos los estilos originales</requirement>
-        <requirement>Conservar los saltos de línea en su posición original</requirement>
-        <requirement>Cuidado con los modismos, utiliza un español latino neutro</requirement>
-        <requirement>Aunque el texto este muy pequeño, parezca incompleto o raro, tu traduce o deja el original si es intraducible</requirement>
-        <requirement>Utiliza honorificos japoneses</requirement>
-        <requirement>Manten lo mas posible el largo en caracteres del texto original, esto por los tiempos para que haya el mismo tiempo a leerlo, acercate, no busques que sea exactamente igual, si no que sea lo mas similar posible en largo de caracteres</requirement>
-        <requirement>Traduce medidas extrangeras que se utilicen, por ejemplo "Millas" a "Kilometros" y asi, en general, traduce medidas extrangeras</requirement>
-    </requirements>
+    <task>Translate subtitle dialogue lines from Japanese to Latin American Spanish</task>
+    
+    <input_format>
+        <description>You will receive a JSON object with three properties containing subtitle dialogue lines in ASS format</description>
+        <structure>
+            {
+                "previous": "Previous dialogue group context (string with newline-separated Dialogue lines)",
+                "current": "Current dialogue group to translate (string with newline-separated Dialogue lines)", 
+                "next": "Next dialogue group context (string with newline-separated Dialogue lines)"
+            }
+        </structure>
+        <dialogue_format>
+            Each dialogue line follows this exact format:
+            Dialogue: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
+            
+            Example: Dialogue: 0,0:00:03.05,0:00:07.80,Default,,0,0,0,,THE PERVERT ISLAND BANG-BANG GUIDE\N~OUTDOOR SEX ISLAND TOURISM PR MOVIE~
+        </dialogue_format>
+        <critical_note>Only translate the "Text" portion (after the last comma). All other metadata must remain unchanged.</critical_note>
+    </input_format>
+
+    <output_format>
+        <requirement>Return ONLY the translated dialogue lines from the "current" group</requirement>
+        <requirement>Maintain the exact same Dialogue format with all metadata preserved</requirement>
+        <requirement>Only translate the text portion after the final comma</requirement>
+        <requirement>Each line must start with "Dialogue:" and maintain all timing and style information</requirement>
+        <example_input>
+            Current group contains:
+            Dialogue: 0,0:00:03.05,0:00:07.80,Default,,0,0,0,,THE PERVERT ISLAND BANG-BANG GUIDE\N~OUTDOOR SEX ISLAND TOURISM PR MOVIE~
+            Dialogue: 0,0:00:09.86,0:00:13.75,Default,,0,0,0,,To all the perverts, degenerates,\Nand sex-lovers across the nation.
+        </example_input>
+        <example_output>
+            Dialogue: 0,0:00:03.05,0:00:07.80,Default,,0,0,0,,GUÍA DE SEXO EN LA ISLA PERVERTIDA\N~PELÍCULA PROMOCIONAL DE TURISMO EN ISLA DE SEXO AL AIRE LIBRE~
+            Dialogue: 0,0:00:09.86,0:00:13.75,Default,,0,0,0,,A todos los pervertidos, degenerados,\Ny amantes del sexo de la nación.
+        </example_output>
+    </output_format>
+
+    <translation_requirements>
+        <requirement>Use neutral Latin American Spanish that all LATAM regions understand</requirement>
+        <requirement>Preserve line breaks using \N (not actual newlines)</requirement>
+        <requirement>Maintain similar character length to original for timing synchronization</requirement>
+        <requirement>Use Japanese honorifics when appropriate</requirement>
+        <requirement>Convert foreign measurements (miles to kilometers, etc.)</requirement>
+        <requirement>Translate naturally like an experienced anime subtitle translator</requirement>
+        <requirement>Adapt jokes to LATAM context when original humor would be lost</requirement>
+        <requirement>Use strong language/profanity when faithful to original tone</requirement>
+        <requirement>Can use LATAM slang and expressions like "pendejo" when appropriate</requirement>
+        <requirement>Translate even small/incomplete text fragments or leave original if untranslatable</requirement>
+        <requirement>Don't be overly formal, translate naturally as an experienced subtitle translator would</requirement>
+    </translation_requirements>
+
     <translations>
-        <rule>Traducir nombres propios conocidos a su versión en español establecida</rule>
+        <rule>Translate known proper names to their established Spanish versions</rule>
         <examples>
             <example>
                 <original>Shenron</original>
@@ -27,8 +66,11 @@
             </example>
         </examples>
     </translations>
+
     <output>
-        <format>text</format>
-        <requirement>Retornaras UNICAMENTE el texto traducido, no incluyas comentarios o explicaciones</requirement>
+        <format>Complete dialogue lines in exact ASS format</format>
+        <requirement>Return ONLY the translated dialogue lines with preserved metadata, no comments or explanations</requirement>
+        <requirement>Each output line must start with "Dialogue:" and maintain exact format structure</requirement>
+        <requirement>Process only the lines from the "current" group in the input JSON</requirement>
     </output>
 </instructions>

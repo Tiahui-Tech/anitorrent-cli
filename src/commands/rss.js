@@ -16,8 +16,8 @@ rssCommand.description('RSS feed operations');
 
 const buildToshoUrl = (includeHevc = false) => {
   const excludePattern = includeHevc 
-    ? '!("REPACK"|"v2"|"(ita)"|"~"|"BATCH")'
-    : '!("REPACK"|"v2"|"(ita)"|"~"|"BATCH"|"HEVC")';
+    ? '!("REPACK"|"v2"|"(ita)"|"~"|"BATCH"|"HIDIVE")'
+    : '!("REPACK"|"v2"|"(ita)"|"~"|"BATCH"|"HIDIVE"|"HEVC")';
   
   return `https://feed.animetosho.org/json?qx=1&q="[Erai-raws] ""1080p""MultiSub"${excludePattern}`;
 };

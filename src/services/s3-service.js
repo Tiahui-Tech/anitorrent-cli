@@ -66,6 +66,44 @@ class S3Service {
         return this.s3.getSignedUrlPromise('getObject', params);
     }
 
+    async copyFile(sourceFileName, destinationFileName, silent = false) {
+        const copyParams = {
+            Bucket: this.bucketName,
+            CopySource: `${this.bucketName}/${sourceFileName}`,
+            Key: destinationFileName,
+            ACL: 'public-read'
+        };
+
+        try {
+            if (!silent) {
+                console.log(`Copying ${sourceFileName} to ${destinationFileName}...`);
+            }
+            await this.s3.copyObject(copyParams).promise();
+            return true;
+        } catch (error) {
+            throw new Error(`Error copying file: ${error.message}`);
+        }
+    }
+
+    async renameFile(oldFileName, newFileName, silent = false) {
+        try {
+            // Copy file to new name
+            await this.copyFile(oldFileName, newFileName, silent);
+            
+            // Delete old file
+            await this.deleteFile(oldFileName, silent);
+            
+            if (!silent) {
+                console.log(`File renamed from ${oldFileName} to ${newFileName}`);
+            }
+            
+            const publicUrl = this.getPublicUrl(newFileName);
+            return { success: true, publicUrl };
+        } catch (error) {
+            throw new Error(`Error renaming file: ${error.message}`);
+        }
+    }
+
     async deleteFile(fileName, silent = false) {
         const params = {
             Bucket: this.bucketName,
@@ -84,4 +122,4 @@ class S3Service {
     }
 }
 
-module.exports = S3Service; 
+module.exports = S3Service;

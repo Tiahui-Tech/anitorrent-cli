@@ -1,6 +1,6 @@
 {
   "name": "@tiahui/anitorrent-cli",
-  "version": "1.1.11",
+  "version": "1.1.13",
   "description": "CLI tool for video management with PeerTube and Storj S3",
   "main": "src/index.js",
   "bin": {
@@ -45,7 +45,7 @@
     "node": ">=14.0.0"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.54.0",
+    "@anthropic-ai/sdk": "^0.64.0",
     "anitomyscript": "github:Tiahui-Tech/anitomyscript",
     "aws-sdk": "^2.1692.0",
     "chalk": "^4.1.2",

@@ -2523,4 +2523,96 @@ subtitlesCommand
     }
   });
 
+subtitlesCommand
+  .command('s3-rename')
+  .description('Rename a subtitle file in S3 storage')
+  .argument('<current-name>', 'current subtitle file name in S3')
+  .argument('<new-name>', 'new subtitle file name')
+  .option('--logs', 'detailed output')
+  .option('--quiet, -q', 'quiet mode')
+  .action(async (currentName, newName, options) => {
+    const isLogs = options.logs || false;
+    const logger = new Logger({
+      verbose: false,
+      quiet: options.quiet || false,
+    });
+
+    try {
+      const config = new ConfigManager();
+      const s3Config = config.getR2Config();
+
+      if (!s3Config.accessKeyId || !s3Config.secretAccessKey) {
+        logger.error('S3 credentials not configured');
+        logger.info('Run "anitorrent config setup" to set up S3 configuration');
+        process.exit(1);
+      }
+
+      const S3Service = require('../services/s3-service');
+      const s3Service = new S3Service(s3Config);
+
+      logger.header('S3 Subtitle Rename');
+      logger.info(`Current name: ${currentName}`);
+      logger.info(`New name: ${newName}`);
+      logger.separator();
+
+      const spinner = ora('Renaming file in S3...').start();
+
+      const result = await s3Service.renameFile('subtitles/' + currentName, 'subtitles/' + newName, true);
+
+      if (result.success) {
+        spinner.succeed('File renamed successfully');
+        logger.success(`Renamed: ${currentName} → ${newName}`);
+        logger.info(`Public URL: ${result.publicUrl}`);
+      } else {
+        spinner.fail('Rename failed');
+        process.exit(1);
+      }
+    } catch (error) {
+      logger.error(`Failed to rename file in S3: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+subtitlesCommand
+  .command('s3-delete')
+  .description('Delete a subtitle file from S3 storage')
+  .argument('<file-name>', 'subtitle file name to delete from S3')
+  .option('--logs', 'detailed output')
+  .option('--quiet, -q', 'quiet mode')
+  .action(async (fileName, options) => {
+    const isLogs = options.logs || false;
+    const logger = new Logger({
+      verbose: false,
+      quiet: options.quiet || false,
+    });
+
+    try {
+      const config = new ConfigManager();
+      const s3Config = config.getR2Config();
+
+      if (!s3Config.accessKeyId || !s3Config.secretAccessKey) {
+        logger.error('S3 credentials not configured');
+        logger.info('Run "anitorrent config setup" to set up S3 configuration');
+        process.exit(1);
+      }
+
+      const S3Service = require('../services/s3-service');
+      const s3Service = new S3Service(s3Config);
+
+      logger.header('S3 Subtitle Delete');
+      logger.info(`File to delete: ${fileName}`);
+      logger.separator();
+
+      const spinner = ora('Deleting file from S3...').start();
+
+      await s3Service.deleteFile('subtitles/' + fileName, true);
+
+      spinner.succeed('File deleted successfully');
+      logger.success(`Deleted: ${fileName}`);
+    } catch (error) {
+      logger.error(`Failed to delete file from S3: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
 module.exports = subtitlesCommand;
